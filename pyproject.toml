@@ -1,0 +1,12 @@
+[project]
+name = "aimfixer"
+version = "0.1.0"
+description = "Mouse overshoot detection and sensitivity advisor for FPS games"
+requires-python = ">=3.9"
+dependencies = [
+    "pynput",
+    "matplotlib",
+]
+
+[project.scripts]
+aimfixer = "aimfixer:main"
