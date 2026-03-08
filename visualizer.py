@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 from analyzer import AnalysisResult
-from config import MIN_EVENTS_FOR_RECOMMENDATION
+from config import MIN_EVENTS_FOR_RECOMMENDATION, MIN_ROWING_EVENTS_FOR_RECOMMENDATION
 
 
 def print_summary(result: AnalysisResult):
@@ -26,17 +26,14 @@ def print_summary(result: AnalysisResult):
     _print_axis(result.x_result, "X-Axis (Horizontal)")
     _print_axis(result.y_result, "Y-Axis (Vertical)")
 
+    # Rowing stats
+    _print_rowing(result)
+
     print()
     print("-" * 50)
 
-    if result.possibly_too_low:
-        print("  NOTE: Very few overshoots detected. Your")
-        print("  sensitivity might be too LOW. Consider")
-        print("  increasing by 5-10%.")
-        print("-" * 50)
-
     enough = (result.x_result.overshoot_count + result.y_result.overshoot_count) >= MIN_EVENTS_FOR_RECOMMENDATION
-    if not enough:
+    if not enough and not result.possibly_too_low:
         print("  Not enough overshoot events for a reliable")
         print("  recommendation. Try a longer session.")
         print("=" * 50)
@@ -44,6 +41,21 @@ def print_summary(result: AnalysisResult):
 
     print("  RECOMMENDATION")
     print("-" * 50)
+
+    if result.possibly_too_low and result.combined_increase_pct > 0.5:
+        print(f"  Sensitivity too LOW - rowing detected!")
+        print(f"  Increase overall sensitivity by ~{result.combined_increase_pct:.0f}%")
+        print()
+        print(f"  Option A - Adjust in-game sens only:")
+        print(f"    {result.current_sens} -> {result.new_sens_increase:.2f}")
+        print()
+        print(f"  Option B - Adjust DPI only:")
+        print(f"    {result.current_dpi} -> {result.new_dpi_increase}")
+        print()
+    elif result.possibly_too_low:
+        print("  NOTE: Rowing detected. Your sensitivity might")
+        print("  be too LOW. Consider increasing by 5-10%.")
+        print()
 
     if result.combined_reduction_pct > 0.5:
         print(f"  Reduce overall sensitivity by ~{result.combined_reduction_pct:.0f}%")
@@ -57,7 +69,7 @@ def print_summary(result: AnalysisResult):
         print(f"  Per-axis (if your game supports separate X/Y):")
         print(f"    X sens: {result.current_sens} -> {result.new_sens_x:.2f}")
         print(f"    Y sens: {result.current_sens} -> {result.new_sens_y:.2f}")
-    else:
+    elif not result.possibly_too_low:
         print("  Your sensitivity looks well-tuned!")
         print("  No significant overshoot detected.")
 
@@ -78,8 +90,29 @@ def _print_axis(axis, label: str):
         print(f"    75th percentile:   {axis.p75_overshoot_pct:.1f}%")
 
 
-def show_charts(result: AnalysisResult, events):
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+def _print_rowing(result: AnalysisResult):
+    x_r = result.x_rowing
+    y_r = result.y_rowing
+    total = (x_r.rowing_event_count if x_r else 0) + (y_r.rowing_event_count if y_r else 0)
+    if total == 0:
+        return
+
+    print()
+    print(f"  Rowing (mouse-lift) Events:")
+    if x_r and x_r.rowing_event_count > 0:
+        print(f"    X-axis: {x_r.rowing_event_count} events, "
+              f"median chain: {x_r.median_chain_length:.0f} sweeps, "
+              f"avg gap: {x_r.mean_gap_duration_ms:.0f}ms")
+    if y_r and y_r.rowing_event_count > 0:
+        print(f"    Y-axis: {y_r.rowing_event_count} events, "
+              f"median chain: {y_r.median_chain_length:.0f} sweeps, "
+              f"avg gap: {y_r.mean_gap_duration_ms:.0f}ms")
+
+
+def show_charts(result: AnalysisResult, events, rowing_events=None):
+    if rowing_events is None:
+        rowing_events = []
+    fig, axes = plt.subplots(3, 2, figsize=(12, 12))
     fig.suptitle("AimFixer Analysis", fontsize=14, fontweight="bold")
 
     x_pcts = result.x_result.overshoot_percentages
@@ -143,6 +176,35 @@ def show_charts(result: AnalysisResult, events):
     ax.set_title("Overshoot Over Time (fatigue?)")
     ax.set_xlabel("Time (seconds)")
     ax.set_ylabel("Overshoot %")
+
+    # Panel 5: Rowing chain length histogram
+    ax = axes[2][0]
+    if rowing_events:
+        chain_lengths = [e.chain_length for e in rowing_events]
+        colors = ["#4a90d9" if e.axis == "x" else "#e8913a" for e in rowing_events]
+        ax.bar(range(len(chain_lengths)), chain_lengths, color=colors, alpha=0.85)
+        ax.axhline(y=2, color="gray", linestyle="--", alpha=0.5, label="Min threshold")
+        ax.scatter([], [], c="#4a90d9", label="Horizontal")
+        ax.scatter([], [], c="#e8913a", label="Vertical")
+        ax.legend()
+    ax.set_title("Rowing Chain Lengths")
+    ax.set_xlabel("Event #")
+    ax.set_ylabel("Sweeps in chain")
+
+    # Panel 6: Rowing events over time
+    ax = axes[2][1]
+    if rowing_events:
+        t0 = rowing_events[0].timestamp
+        times = [(e.timestamp - t0) for e in rowing_events]
+        ratios = [e.increase_ratio for e in rowing_events]
+        colors = ["#4a90d9" if e.axis == "x" else "#e8913a" for e in rowing_events]
+        ax.scatter(times, ratios, c=colors, alpha=0.6, s=30)
+        ax.scatter([], [], c="#4a90d9", label="Horizontal")
+        ax.scatter([], [], c="#e8913a", label="Vertical")
+        ax.legend()
+    ax.set_title("Rowing Events Over Time")
+    ax.set_xlabel("Time (seconds)")
+    ax.set_ylabel("Increase ratio (total/max)")
 
     plt.tight_layout()
     plt.show()

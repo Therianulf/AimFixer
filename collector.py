@@ -16,7 +16,7 @@ class MouseSample:
 
 
 class MouseCollector:
-    def __init__(self):
+    def __init__(self, on_state_change=None):
         self._samples: list[MouseSample] = []
         self._collecting = False
         self._done = threading.Event()
@@ -25,6 +25,7 @@ class MouseCollector:
         self._prev_y: int | None = None
         self._mouse_listener: mouse.Listener | None = None
         self._key_listener: keyboard.Listener | None = None
+        self._on_state_change = on_state_change
 
     def _on_move(self, x: int, y: int):
         if not self._collecting:
@@ -58,11 +59,17 @@ class MouseCollector:
                 self._prev_y = None
                 self._samples.clear()
                 self._started.set()
-                print("  Recording started! Move your mouse / aim in-game.")
+                if self._on_state_change:
+                    self._on_state_change("recording")
+                else:
+                    print("  Recording started! Move your mouse / aim in-game.")
             else:
                 self._collecting = False
                 self._done.set()
-                print("  Recording stopped.")
+                if self._on_state_change:
+                    self._on_state_change("stopped")
+                else:
+                    print("  Recording stopped.")
 
     def start(self):
         """Start listeners and wait for the full collect cycle (F6 start, F6 stop)."""

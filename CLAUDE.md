@@ -26,7 +26,10 @@ pyproject.toml - Project metadata and dependencies
 ## How to Run
 
 ```bash
-# Install dependencies
+# Use the project venv
+source .venv/bin/activate
+
+# Install dependencies (if needed)
 pip install pynput matplotlib
 
 # Run

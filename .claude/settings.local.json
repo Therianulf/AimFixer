@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(source:*)"
+      "Bash(source:*)",
+      "Bash(/Users/blarson/Github/AimFixer/.venv/bin/python3:*)",
+      "Bash(.venv/bin/python:*)"
     ]
   }
 }

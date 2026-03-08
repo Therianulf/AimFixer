@@ -7,6 +7,8 @@ from config import (
     MAX_CORRECTION_GAP_S, MAX_CORRECTION_RATIO,
     MIN_FLICK_VELOCITY_PX_S, VELOCITY_RATIO_THRESHOLD,
     MAX_CORRECTION_DURATION_S,
+    MIN_ROWING_GAP_S, MAX_ROWING_GAP_S,
+    MIN_ROWING_SWEEPS, MIN_ROWING_SWEEP_VELOCITY,
 )
 
 
@@ -24,6 +26,19 @@ class Sweep:
     @property
     def duration(self) -> float:
         return self.end_time - self.start_time
+
+
+@dataclass
+class RowingEvent:
+    axis: str
+    sweeps: list  # list[Sweep]
+    chain_length: int
+    total_displacement: float
+    max_single_displacement: float
+    increase_ratio: float  # total / max single
+    gap_durations: list[float]
+    mean_gap_duration: float
+    timestamp: float
 
 
 @dataclass
@@ -52,6 +67,7 @@ class OvershootDetector:
         self._sweeps_x: list[Sweep] = []
         self._sweeps_y: list[Sweep] = []
         self._events: list[OvershootEvent] = []
+        self._rowing_events: list[RowingEvent] = []
 
     def detect(self) -> list[OvershootEvent]:
         if len(self._samples) < 2:
@@ -59,6 +75,7 @@ class OvershootDetector:
         self._filter_noise()
         self._segment_sweeps()
         self._classify_overshoots()
+        self._classify_rowing()
         return self._events
 
     def get_all_sweeps(self) -> dict[str, list[Sweep]]:
@@ -108,7 +125,8 @@ class OvershootDetector:
 
         for i in range(sweep_start + 1, len(smoothed)):
             s = _sign(smoothed[i])
-            if s != 0 and s != current_sign:
+            time_gap = self._samples[i].timestamp - self._samples[i - 1].timestamp
+            if (s != 0 and s != current_sign) or time_gap > MIN_ROWING_GAP_S:
                 sweep = self._make_sweep(axis, sweep_start, i - 1, smoothed)
                 if sweep:
                     sweeps.append(sweep)
@@ -209,3 +227,58 @@ class OvershootDetector:
     def _classify_overshoots(self):
         self._classify_axis(self._sweeps_x)
         self._classify_axis(self._sweeps_y)
+
+    # --- Stage 4: Rowing classification ---
+
+    def get_rowing_events(self) -> list[RowingEvent]:
+        return self._rowing_events
+
+    def _classify_rowing(self):
+        self._classify_rowing_axis(self._sweeps_x)
+        self._classify_rowing_axis(self._sweeps_y)
+
+    def _classify_rowing_axis(self, sweeps: list[Sweep]):
+        if len(sweeps) < MIN_ROWING_SWEEPS:
+            return
+
+        chain: list[Sweep] = [sweeps[0]]
+
+        for i in range(1, len(sweeps)):
+            prev = sweeps[i - 1]
+            curr = sweeps[i]
+
+            same_dir = _sign(prev.total_displacement) == _sign(curr.total_displacement)
+            gap = curr.start_time - prev.end_time
+            gap_ok = MIN_ROWING_GAP_S <= gap <= MAX_ROWING_GAP_S
+            fast_enough = curr.peak_velocity >= MIN_ROWING_SWEEP_VELOCITY
+
+            if same_dir and gap_ok and fast_enough:
+                chain.append(curr)
+            else:
+                self._emit_rowing_event(chain)
+                chain = [curr]
+
+        self._emit_rowing_event(chain)
+
+    def _emit_rowing_event(self, chain: list[Sweep]):
+        if len(chain) < MIN_ROWING_SWEEPS:
+            return
+
+        displacements = [abs(s.total_displacement) for s in chain]
+        total_disp = sum(displacements)
+        max_single = max(displacements)
+        gaps = []
+        for i in range(1, len(chain)):
+            gaps.append(chain[i].start_time - chain[i - 1].end_time)
+
+        self._rowing_events.append(RowingEvent(
+            axis=chain[0].axis,
+            sweeps=chain,
+            chain_length=len(chain),
+            total_displacement=total_disp,
+            max_single_displacement=max_single,
+            increase_ratio=total_disp / max_single if max_single > 0 else 1.0,
+            gap_durations=gaps,
+            mean_gap_duration=sum(gaps) / len(gaps) if gaps else 0.0,
+            timestamp=chain[0].start_time,
+        ))

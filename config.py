@@ -27,5 +27,22 @@ WARP_THRESHOLD_PX = 100
 # Hotkey
 TOGGLE_KEY = keyboard.Key.f6
 
+# Rowing detection
+MIN_ROWING_GAP_S = 0.030           # Min gap to count as mouse lift (30ms)
+MAX_ROWING_GAP_S = 0.500           # Max gap before it's a deliberate pause (500ms)
+MIN_ROWING_SWEEPS = 2              # Min consecutive same-dir sweeps for rowing
+MIN_ROWING_SWEEP_VELOCITY = 400.0  # Lower than flick threshold since rowing sweeps decelerate at pad edge
+ROWING_CORRECTION_FACTOR = 0.50    # Conservative increase recommendation
+MIN_ROWING_EVENTS_FOR_RECOMMENDATION = 5
+
 # DPI snapping
 DPI_STEP = 50
+
+# Overlay appearance
+OVERLAY_WIDTH = 360
+OVERLAY_HEIGHT = 80
+OVERLAY_TOP_OFFSET = 80
+OVERLAY_BG_ALPHA = 0.80
+OVERLAY_TITLE_FONT_SIZE = 18.0
+OVERLAY_STATUS_FONT_SIZE = 14.0
+OVERLAY_CORNER_RADIUS = 12.0
