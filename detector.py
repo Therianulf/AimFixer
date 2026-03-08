@@ -186,7 +186,14 @@ class OvershootDetector:
     # --- Stage 3: Click-centric aim analysis ---
 
     def _classify_click_aims(self):
-        """For each click, analyze the approach and correction phases using RAW data."""
+        """For each click, analyze the approach and correction phases using RAW data.
+
+        Split logic:
+        - Approach = window start to where mouse settles (speed drops AND stays
+          below a low absolute threshold, or a significant direction reversal).
+        - Correction = from settle point to click (fine micro-adjustments).
+        - Post-click data is NOT included (the click IS the aim event).
+        """
         if not self._click_times:
             return
 
@@ -194,51 +201,55 @@ class OvershootDetector:
         timestamps = [s.timestamp for s in self._samples]
         n = len(self._samples)
 
+        # Absolute speed threshold: below this = "settled / correcting"
+        SETTLE_SPEED = 500.0  # px/s — typical fine-correction speed
+
         for click_t in self._click_times:
             before_start_t = click_t - CLICK_WINDOW_BEFORE_S
-            after_end_t = click_t + CLICK_WINDOW_AFTER_S
 
             i_start = bisect.bisect_left(timestamps, before_start_t)
             i_click = bisect.bisect_right(timestamps, click_t)
-            i_end = bisect.bisect_right(timestamps, after_end_t)
 
             # Need at least a few samples before the click
-            if i_click - i_start < 2:
+            if i_click - i_start < 3:
                 continue
 
-            # --- Approach phase: find peak velocity using RAW data ---
+            # --- Compute per-sample 2D speed (raw data) ---
+            speeds: list[tuple[int, float]] = []
             peak_velocity = 0.0
             peak_index = i_start
-            speeds_before: list[tuple[int, float]] = []
 
             for i in range(max(i_start, 1), i_click):
                 dt = self._samples[i].timestamp - self._samples[i - 1].timestamp
                 if dt > 0:
-                    # Use RAW dx/dy for velocity calculation
                     spd = math.hypot(
                         self._samples[i].dx / dt,
                         self._samples[i].dy / dt,
                     )
-                    speeds_before.append((i, spd))
-                    if spd > peak_velocity:
-                        peak_velocity = spd
-                        peak_index = i
+                else:
+                    spd = 0.0
+                speeds.append((i, spd))
+                if spd > peak_velocity:
+                    peak_velocity = spd
+                    peak_index = i
 
             if peak_velocity < MIN_FLICK_VELOCITY_PX_S:
-                # No significant flick before this click
                 continue
 
-            # Find where approach transitions to correction:
-            # velocity drops below threshold of peak
-            velocity_threshold = peak_velocity * CLICK_APPROACH_VELOCITY_DROP
-            transition_index = i_click  # default: transition right at click
+            # --- Find transition from approach to correction ---
+            # After peak velocity, find where speed drops below BOTH:
+            #   a) a fraction of peak (CLICK_APPROACH_VELOCITY_DROP)
+            #   b) the absolute settle threshold
+            # This ensures the deceleration tail of the flick stays in "approach"
+            relative_threshold = peak_velocity * CLICK_APPROACH_VELOCITY_DROP
+            transition_index = i_click  # default: no correction phase
 
-            for idx, spd in speeds_before:
-                if idx > peak_index and spd <= velocity_threshold:
+            for idx, spd in speeds:
+                if idx > peak_index and spd <= relative_threshold and spd <= SETTLE_SPEED:
                     transition_index = idx
                     break
 
-            # Approach displacement (raw, from start to transition)
+            # --- Approach: window start to transition ---
             approach_disp = 0.0
             for i in range(i_start, min(transition_index, i_click)):
                 approach_disp += math.hypot(
@@ -246,32 +257,26 @@ class OvershootDetector:
                     self._samples[i].dy,
                 )
 
-            approach_duration = 0.0
-            if i_start < len(timestamps) and transition_index < len(timestamps):
-                approach_duration = timestamps[min(transition_index, i_click) - 1] - timestamps[i_start] if transition_index > i_start else 0.0
+            approach_duration = (
+                timestamps[min(transition_index, i_click) - 1] - timestamps[i_start]
+            ) if transition_index > i_start else 0.0
 
             if approach_disp < 1.0:
                 continue
 
-            # --- Correction phase: from transition to click, using RAW data ---
+            # --- Correction: transition to click (NO post-click data) ---
             correction_mag = 0.0
             dir_changes = 0
             angle_rotation = 0.0
             prev_angle = None
-            correction_start_t = timestamps[transition_index] if transition_index < n else click_t
 
-            # Also include samples after the click (post-click jitter)
-            corr_range_start = transition_index
-            corr_range_end = min(i_end, n)
-
-            for i in range(corr_range_start, corr_range_end):
-                # Use RAW data
+            for i in range(transition_index, i_click):
                 dx = self._samples[i].dx
                 dy = self._samples[i].dy
                 step = math.hypot(dx, dy)
                 correction_mag += step
 
-                if step > 0.5:  # ignore tiny noise
+                if step > 0.5:
                     angle = math.atan2(dy, dx)
                     if prev_angle is not None:
                         delta = math.atan2(
@@ -283,11 +288,11 @@ class OvershootDetector:
                             dir_changes += 1
                     prev_angle = angle
 
-            correction_duration = (timestamps[min(corr_range_end - 1, n - 1)] - correction_start_t) if corr_range_end > corr_range_start else 0.0
+            correction_duration = (
+                timestamps[i_click - 1] - timestamps[transition_index]
+            ) if i_click > transition_index else 0.0
 
-            # Overshoot percentage: correction / approach
             overshoot_pct = (correction_mag / approach_disp * 100.0) if approach_disp > 0 else 0.0
-
             is_swirl = angle_rotation > MIN_SWIRL_ANGLE_RAD
 
             self._click_aim_events.append(ClickAimEvent(
