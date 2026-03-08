@@ -303,6 +303,87 @@ class OvershootDetector:
                 is_swirl=is_swirl,
             ))
 
+    def debug_click_analysis(self):
+        """Print diagnostic info about why clicks were/weren't analyzed."""
+        if not self._samples:
+            print("\n  DEBUG: No samples")
+            return
+
+        # Global sample stats
+        nonzero = sum(1 for s in self._samples if s.dx != 0 or s.dy != 0)
+        max_dx = max(abs(s.dx) for s in self._samples)
+        max_dy = max(abs(s.dy) for s in self._samples)
+        print(f"\n  DEBUG Sample Stats:")
+        print(f"    Total samples: {len(self._samples)}")
+        print(f"    Non-zero dx/dy: {nonzero} ({nonzero/len(self._samples)*100:.1f}%)")
+        print(f"    Max |dx|={max_dx:.1f}, max |dy|={max_dy:.1f}")
+        # Show first 10 non-zero samples
+        shown = 0
+        for i, s in enumerate(self._samples):
+            if s.dx != 0 or s.dy != 0:
+                print(f"      [{i}]: dx={s.dx:.1f} dy={s.dy:.1f} x={s.x} y={s.y}")
+                shown += 1
+                if shown >= 10:
+                    break
+
+        if not self._click_times:
+            print("    No click times recorded")
+            return
+
+        import bisect
+        timestamps = [s.timestamp for s in self._samples]
+
+        too_few_samples = 0
+        below_velocity = 0
+        analyzed = 0
+        peak_velocities = []
+
+        for click_t in self._click_times:
+            before_start_t = click_t - CLICK_WINDOW_BEFORE_S
+            i_start = bisect.bisect_left(timestamps, before_start_t)
+            i_click = bisect.bisect_right(timestamps, click_t)
+
+            if i_click - i_start < 2:
+                too_few_samples += 1
+                continue
+
+            peak_velocity = 0.0
+            for i in range(max(i_start, 1), i_click):
+                dt = self._samples[i].timestamp - self._samples[i - 1].timestamp
+                if dt > 0:
+                    spd = math.hypot(
+                        self._samples[i].dx / dt,
+                        self._samples[i].dy / dt,
+                    )
+                    peak_velocity = max(peak_velocity, spd)
+
+            peak_velocities.append(peak_velocity)
+
+            if peak_velocity < MIN_FLICK_VELOCITY_PX_S:
+                below_velocity += 1
+            else:
+                analyzed += 1
+
+        print(f"\n  DEBUG Click Analysis:")
+        print(f"    Total clicks: {len(self._click_times)}")
+        print(f"    Too few samples before click: {too_few_samples}")
+        print(f"    Below velocity threshold ({MIN_FLICK_VELOCITY_PX_S}): {below_velocity}")
+        print(f"    Analyzed (passed velocity): {analyzed}")
+        if peak_velocities:
+            peak_velocities.sort()
+            print(f"    Peak velocities: min={peak_velocities[0]:.0f}, "
+                  f"median={peak_velocities[len(peak_velocities)//2]:.0f}, "
+                  f"max={peak_velocities[-1]:.0f} px/s")
+
+        # Debug first click's window in detail
+        if self._click_times and timestamps:
+            ct = self._click_times[0]
+            i_start = bisect.bisect_left(timestamps, ct - CLICK_WINDOW_BEFORE_S)
+            i_click = bisect.bisect_right(timestamps, ct)
+            nz = sum(1 for i in range(i_start, i_click)
+                     if self._samples[i].dx != 0 or self._samples[i].dy != 0)
+            print(f"\n    First click window ({i_click - i_start} samples, {nz} non-zero):")
+
     # --- Stage 4: Rowing classification ---
 
     def get_rowing_events(self) -> list[RowingEvent]:

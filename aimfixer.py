@@ -115,6 +115,9 @@ def main():
         click_aim_events = detector.get_click_aim_events()
         rowing_events = detector.get_rowing_events()
 
+        # Debug: show why clicks were/weren't analyzed
+        detector.debug_click_analysis()
+
         result = analyze(
             click_aim_events=click_aim_events,
             total_clicks=len(click_times),
