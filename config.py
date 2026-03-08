@@ -1,19 +1,15 @@
 from pynput import keyboard
 
-# Noise filtering
-EMA_ALPHA = 0.3
-DEAD_ZONE_PIXELS = 0.5
+# Noise filtering — light touch to preserve fast movements
+EMA_ALPHA = 0.08
+DEAD_ZONE_PIXELS = 0.3
 
-# Sweep segmentation
-MIN_SWEEP_DURATION_S = 0.020
-MIN_SWEEP_PIXELS = 3.0
+# Sweep segmentation — catch shorter movements
+MIN_SWEEP_DURATION_S = 0.010
+MIN_SWEEP_PIXELS = 1.5
 
-# Overshoot classification
-MAX_CORRECTION_GAP_S = 0.050
-MAX_CORRECTION_RATIO = 0.50
-MIN_FLICK_VELOCITY_PX_S = 800.0
-VELOCITY_RATIO_THRESHOLD = 0.70
-MAX_CORRECTION_DURATION_S = 0.300
+# Click-centric flick detection
+MIN_FLICK_VELOCITY_PX_S = 100.0
 
 # Sensitivity recommendation
 CORRECTION_FACTOR = 0.60
@@ -31,15 +27,19 @@ TOGGLE_KEY = keyboard.Key.f6
 MIN_ROWING_GAP_S = 0.030           # Min gap to count as mouse lift (30ms)
 MAX_ROWING_GAP_S = 0.500           # Max gap before it's a deliberate pause (500ms)
 MIN_ROWING_SWEEPS = 2              # Min consecutive same-dir sweeps for rowing
-MIN_ROWING_SWEEP_VELOCITY = 400.0  # Lower than flick threshold since rowing sweeps decelerate at pad edge
+MIN_ROWING_SWEEP_VELOCITY = 100.0  # Lower than flick threshold since rowing sweeps decelerate at pad edge
 ROWING_CORRECTION_FACTOR = 0.50    # Conservative increase recommendation
 MIN_ROWING_EVENTS_FOR_RECOMMENDATION = 5
 
-# Swirl detection (2D overshoot)
-MIN_SWIRL_ANGLE_RAD = 0.785          # pi/4 = 45° minimum correction arc rotation
-MAX_SWIRL_CORRECTION_S = 0.400       # Slightly longer than 1D (arcs take more time)
-SWIRL_DOT_THRESHOLD = -0.3           # Correction must point somewhat opposite to flick
-SWIRL_WEIGHT = 2.0                   # Swirls weighted higher in combined recommendation
+# Click-proximity analysis
+CLICK_WINDOW_BEFORE_S = 0.500       # Look 500ms before click for the flick
+CLICK_WINDOW_AFTER_S = 0.300        # Look 300ms after click for correction jitter
+
+# Swirl detection (2D overshoot) — lower angle requirement
+MIN_SWIRL_ANGLE_RAD = 0.524          # ~30° minimum correction arc rotation
+
+# Click-centric velocity threshold for approach/correction transition
+CLICK_APPROACH_VELOCITY_DROP = 0.30  # Correction starts when velocity drops to 30% of peak
 
 # Movement key warning
 MOVEMENT_KEYS_SPECIAL = {keyboard.Key.up, keyboard.Key.down, keyboard.Key.left, keyboard.Key.right}
@@ -55,7 +55,8 @@ OVERLAY_WIDTH = 360
 OVERLAY_HEIGHT_WAITING = 220
 OVERLAY_HEIGHT_COMPACT = 80
 OVERLAY_HEIGHT = OVERLAY_HEIGHT_COMPACT
-OVERLAY_TOP_OFFSET = 80
+OVERLAY_TOP_OFFSET = 40
+OVERLAY_RIGHT_OFFSET = 20
 OVERLAY_BG_ALPHA = 0.80
 OVERLAY_TITLE_FONT_SIZE = 18.0
 OVERLAY_STATUS_FONT_SIZE = 14.0

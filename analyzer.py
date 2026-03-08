@@ -1,23 +1,25 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from statistics import median, mean
-from detector import OvershootEvent, RowingEvent, SwirlEvent
+from detector import ClickAimEvent, RowingEvent
 from config import (
     CORRECTION_FACTOR, MIN_EVENTS_FOR_RECOMMENDATION,
     X_WEIGHT, Y_WEIGHT, DPI_STEP,
     ROWING_CORRECTION_FACTOR, MIN_ROWING_EVENTS_FOR_RECOMMENDATION,
-    SWIRL_WEIGHT,
 )
 
 
 @dataclass
-class AxisResult:
-    axis: str
-    overshoot_count: int
-    flick_count: int
+class ClickAnalysisResult:
+    total_clicks: int
+    analyzed_clicks: int              # clicks with a detected flick
+    swirl_click_count: int            # clicks with angle_rotation > threshold
+    swirl_click_pct: float
     median_overshoot_pct: float
     mean_overshoot_pct: float
-    p75_overshoot_pct: float
+    median_correction_magnitude: float
+    median_correction_duration_ms: float
+    median_direction_changes: float
     recommended_reduction_pct: float
     overshoot_percentages: list[float]
 
@@ -32,36 +34,24 @@ class RowingAxisResult:
 
 
 @dataclass
-class SwirlResult:
-    swirl_count: int
-    median_overshoot_pct: float
-    mean_overshoot_pct: float
-    median_angle_rotation_deg: float
-    recommended_reduction_pct: float
-    overshoot_percentages: list[float]
-
-
-@dataclass
 class AnalysisResult:
     session_duration: float
     total_samples: int
-    x_result: AxisResult
-    y_result: AxisResult
-    combined_reduction_pct: float
-    # Computed recommendations using user's settings
     current_dpi: int
     current_sens: float
+    click_analysis: ClickAnalysisResult
+    # Overshoot recommendations
+    combined_reduction_pct: float
     new_sens_combined: float
     new_dpi_combined: int
-    new_sens_x: float
-    new_sens_y: float
+    # Rowing
     possibly_too_low: bool
     x_rowing: RowingAxisResult | None = None
     y_rowing: RowingAxisResult | None = None
     combined_increase_pct: float = 0.0
     new_sens_increase: float = 0.0
     new_dpi_increase: int = 0
-    swirl_result: SwirlResult | None = None
+    # Contamination
     movement_contamination_pct: float = 0.0
 
 
@@ -69,41 +59,52 @@ def _confidence_weight(n_events: int) -> float:
     return min(1.0, 0.5 + 0.5 * (n_events / 50))
 
 
-def _sorted_percentile(values: list[float], p: float) -> float:
-    if not values:
-        return 0.0
-    sorted_v = sorted(values)
-    idx = int(len(sorted_v) * p / 100.0)
-    idx = min(idx, len(sorted_v) - 1)
-    return sorted_v[idx]
-
-
 def _snap_dpi(dpi: float) -> int:
     return max(DPI_STEP, round(dpi / DPI_STEP) * DPI_STEP)
 
 
-def _compute_axis(events: list[OvershootEvent], flick_count: int, axis: str) -> AxisResult:
-    percentages = [e.overshoot_percentage for e in events]
-    n = len(percentages)
-
+def _compute_click_analysis(
+    click_aim_events: list[ClickAimEvent],
+    total_clicks: int,
+) -> ClickAnalysisResult:
+    n = len(click_aim_events)
     if n == 0:
-        return AxisResult(
-            axis=axis, overshoot_count=0, flick_count=flick_count,
-            median_overshoot_pct=0.0, mean_overshoot_pct=0.0,
-            p75_overshoot_pct=0.0, recommended_reduction_pct=0.0,
+        return ClickAnalysisResult(
+            total_clicks=total_clicks,
+            analyzed_clicks=0,
+            swirl_click_count=0,
+            swirl_click_pct=0.0,
+            median_overshoot_pct=0.0,
+            mean_overshoot_pct=0.0,
+            median_correction_magnitude=0.0,
+            median_correction_duration_ms=0.0,
+            median_direction_changes=0.0,
+            recommended_reduction_pct=0.0,
             overshoot_percentages=[],
         )
 
-    med = median(percentages)
-    avg = mean(percentages)
-    p75 = _sorted_percentile(percentages, 75)
-    reduction = med * CORRECTION_FACTOR * _confidence_weight(n)
+    pcts = [e.overshoot_percentage for e in click_aim_events]
+    corr_mags = [e.correction_magnitude for e in click_aim_events]
+    corr_durs = [e.correction_duration * 1000 for e in click_aim_events]  # to ms
+    dir_changes = [e.correction_direction_changes for e in click_aim_events]
+    swirl_count = sum(1 for e in click_aim_events if e.is_swirl)
+    swirl_pct = swirl_count / n * 100.0
 
-    return AxisResult(
-        axis=axis, overshoot_count=n, flick_count=flick_count,
-        median_overshoot_pct=med, mean_overshoot_pct=avg,
-        p75_overshoot_pct=p75, recommended_reduction_pct=reduction,
-        overshoot_percentages=percentages,
+    med_pct = median(pcts)
+    reduction = med_pct * CORRECTION_FACTOR * _confidence_weight(n)
+
+    return ClickAnalysisResult(
+        total_clicks=total_clicks,
+        analyzed_clicks=n,
+        swirl_click_count=swirl_count,
+        swirl_click_pct=swirl_pct,
+        median_overshoot_pct=med_pct,
+        mean_overshoot_pct=mean(pcts),
+        median_correction_magnitude=median(corr_mags),
+        median_correction_duration_ms=median(corr_durs),
+        median_direction_changes=median(dir_changes),
+        recommended_reduction_pct=reduction,
+        overshoot_percentages=pcts,
     )
 
 
@@ -113,7 +114,7 @@ def _compute_rowing_axis(events: list[RowingEvent]) -> RowingAxisResult | None:
     n = len(events)
     chain_lengths = [e.chain_length for e in events]
     increase_ratios = [e.increase_ratio for e in events]
-    gap_durations = [e.mean_gap_duration * 1000 for e in events]  # to ms
+    gap_durations = [e.mean_gap_duration * 1000 for e in events]
 
     med_ratio = median(increase_ratios)
     increase_pct = (med_ratio - 1.0) * 100 * ROWING_CORRECTION_FACTOR * _confidence_weight(n)
@@ -127,64 +128,20 @@ def _compute_rowing_axis(events: list[RowingEvent]) -> RowingAxisResult | None:
     )
 
 
-def _compute_swirl(events: list[SwirlEvent]) -> SwirlResult | None:
-    if not events:
-        return None
-    import math
-    n = len(events)
-    pcts = [e.overshoot_percentage for e in events]
-    angles = [math.degrees(e.total_angle_rotation) for e in events]
-    med = median(pcts)
-    reduction = med * CORRECTION_FACTOR * _confidence_weight(n)
-
-    return SwirlResult(
-        swirl_count=n,
-        median_overshoot_pct=med,
-        mean_overshoot_pct=mean(pcts),
-        median_angle_rotation_deg=median(angles),
-        recommended_reduction_pct=reduction,
-        overshoot_percentages=pcts,
-    )
-
-
 def analyze(
-    events: list[OvershootEvent],
-    flick_counts: dict[str, int],
+    click_aim_events: list[ClickAimEvent],
+    total_clicks: int,
     session_duration: float,
     total_samples: int,
     current_dpi: int,
     current_sens: float,
     rowing_events: list[RowingEvent] | None = None,
-    swirl_events: list[SwirlEvent] | None = None,
     movement_sample_count: int = 0,
 ) -> AnalysisResult:
-    x_events = [e for e in events if e.axis == "x"]
-    y_events = [e for e in events if e.axis == "y"]
+    # Click-centric analysis
+    click_analysis = _compute_click_analysis(click_aim_events, total_clicks)
 
-    x_result = _compute_axis(x_events, flick_counts.get("x", 0), "x")
-    y_result = _compute_axis(y_events, flick_counts.get("y", 0), "y")
-
-    # Swirl analysis
-    swirl_result = _compute_swirl(swirl_events or [])
-
-    # Combined reduction (per-axis + swirl, weighted)
-    axis_reduction = 0.0
-    if x_result.recommended_reduction_pct > 0 or y_result.recommended_reduction_pct > 0:
-        axis_reduction = (
-            x_result.recommended_reduction_pct * X_WEIGHT +
-            y_result.recommended_reduction_pct * Y_WEIGHT
-        ) / (X_WEIGHT + Y_WEIGHT)
-
-    swirl_reduction = swirl_result.recommended_reduction_pct if swirl_result else 0.0
-
-    if swirl_reduction > 0 and axis_reduction > 0:
-        combined = (
-            axis_reduction * (X_WEIGHT + Y_WEIGHT) + swirl_reduction * SWIRL_WEIGHT
-        ) / (X_WEIGHT + Y_WEIGHT + SWIRL_WEIGHT)
-    elif swirl_reduction > 0:
-        combined = swirl_reduction
-    else:
-        combined = axis_reduction
+    combined_reduction = click_analysis.recommended_reduction_pct
 
     # Movement contamination
     contamination = (movement_sample_count / total_samples * 100.0) if total_samples > 0 else 0.0
@@ -197,7 +154,6 @@ def analyze(
     x_rowing = _compute_rowing_axis(x_rowing_events)
     y_rowing = _compute_rowing_axis(y_rowing_events)
 
-    # Combined rowing increase recommendation
     x_inc = x_rowing.recommended_increase_pct if x_rowing else 0.0
     y_inc = y_rowing.recommended_increase_pct if y_rowing else 0.0
     if x_inc > 0 or y_inc > 0:
@@ -209,10 +165,8 @@ def analyze(
     possibly_too_low = total_rowing >= MIN_ROWING_EVENTS_FOR_RECOMMENDATION
 
     # Compute new settings (overshoot reduction)
-    new_sens_combined = current_sens * (1 - combined / 100.0)
-    new_dpi_combined = _snap_dpi(current_dpi * (1 - combined / 100.0))
-    new_sens_x = current_sens * (1 - x_result.recommended_reduction_pct / 100.0)
-    new_sens_y = current_sens * (1 - y_result.recommended_reduction_pct / 100.0)
+    new_sens_combined = current_sens * (1 - combined_reduction / 100.0)
+    new_dpi_combined = _snap_dpi(current_dpi * (1 - combined_reduction / 100.0))
 
     # Compute new settings (rowing increase)
     new_sens_increase = current_sens * (1 + combined_increase / 100.0)
@@ -221,21 +175,17 @@ def analyze(
     return AnalysisResult(
         session_duration=session_duration,
         total_samples=total_samples,
-        x_result=x_result,
-        y_result=y_result,
-        combined_reduction_pct=combined,
         current_dpi=current_dpi,
         current_sens=current_sens,
+        click_analysis=click_analysis,
+        combined_reduction_pct=combined_reduction,
         new_sens_combined=new_sens_combined,
         new_dpi_combined=new_dpi_combined,
-        new_sens_x=new_sens_x,
-        new_sens_y=new_sens_y,
         possibly_too_low=possibly_too_low,
         x_rowing=x_rowing,
         y_rowing=y_rowing,
         combined_increase_pct=combined_increase,
         new_sens_increase=new_sens_increase,
         new_dpi_increase=new_dpi_increase,
-        swirl_result=swirl_result,
         movement_contamination_pct=contamination,
     )

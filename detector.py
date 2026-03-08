@@ -5,13 +5,12 @@ from collector import MouseSample
 from config import (
     EMA_ALPHA, DEAD_ZONE_PIXELS,
     MIN_SWEEP_DURATION_S, MIN_SWEEP_PIXELS,
-    MAX_CORRECTION_GAP_S, MAX_CORRECTION_RATIO,
-    MIN_FLICK_VELOCITY_PX_S, VELOCITY_RATIO_THRESHOLD,
-    MAX_CORRECTION_DURATION_S,
+    MIN_FLICK_VELOCITY_PX_S,
     MIN_ROWING_GAP_S, MAX_ROWING_GAP_S,
     MIN_ROWING_SWEEPS, MIN_ROWING_SWEEP_VELOCITY,
-    MIN_SWIRL_ANGLE_RAD, MAX_SWIRL_CORRECTION_S,
-    SWIRL_DOT_THRESHOLD,
+    MIN_SWIRL_ANGLE_RAD,
+    CLICK_WINDOW_BEFORE_S, CLICK_WINDOW_AFTER_S,
+    CLICK_APPROACH_VELOCITY_DROP,
 )
 
 
@@ -45,37 +44,20 @@ class RowingEvent:
 
 
 @dataclass
-class OvershootEvent:
-    axis: str
-    initial_sweep: Sweep
-    correction_sweep: Sweep
-    overshoot_distance: float
-    overshoot_percentage: float
-    timestamp: float
-
-
-@dataclass
-class SwirlEvent:
-    flick_start_index: int
-    flick_end_index: int
-    flick_start_time: float
-    flick_end_time: float
-    flick_displacement_x: float
-    flick_displacement_y: float
-    flick_magnitude: float
-    flick_peak_velocity: float
-    flick_direction: float  # radians
-    correction_start_index: int
-    correction_end_index: int
-    correction_start_time: float
-    correction_end_time: float
-    correction_displacement_x: float
-    correction_displacement_y: float
-    correction_magnitude: float
-    overshoot_percentage: float
-    total_angle_rotation: float  # radians
-    peak_correction_velocity: float
-    timestamp: float
+class ClickAimEvent:
+    click_time: float
+    # Approach phase (the flick toward target)
+    approach_peak_velocity: float    # peak 2D speed before click (raw)
+    approach_displacement: float     # total distance covered approaching
+    approach_duration: float         # how long the flick took
+    # Correction phase (jitter/adjustment before settling on target)
+    correction_magnitude: float      # total displacement in correction window
+    correction_direction_changes: int
+    correction_angle_rotation: float  # radians — swirl indicator
+    correction_duration: float       # time from first correction to click
+    # Quality metrics
+    overshoot_percentage: float      # correction / approach * 100
+    is_swirl: bool                   # angle rotation > threshold
 
 
 def _sign(v: float) -> int:
@@ -87,35 +69,30 @@ def _sign(v: float) -> int:
 
 
 class OvershootDetector:
-    def __init__(self, samples: list[MouseSample]):
+    def __init__(self, samples: list[MouseSample], click_times: list[float] | None = None):
         self._samples = samples
+        self._click_times = click_times or []
         self._smoothed_dx: list[float] = []
         self._smoothed_dy: list[float] = []
         self._sweeps_x: list[Sweep] = []
         self._sweeps_y: list[Sweep] = []
-        self._events: list[OvershootEvent] = []
         self._rowing_events: list[RowingEvent] = []
-        self._swirl_events: list[SwirlEvent] = []
+        self._click_aim_events: list[ClickAimEvent] = []
 
-    def detect(self) -> list[OvershootEvent]:
+    def detect(self) -> list[ClickAimEvent]:
         if len(self._samples) < 2:
             return []
         self._filter_noise()
         self._segment_sweeps()
-        self._classify_overshoots()
-        self._classify_swirls()
-        self._merge_events()
+        self._classify_click_aims()
         self._classify_rowing()
-        return self._events
+        return self._click_aim_events
 
     def get_all_sweeps(self) -> dict[str, list[Sweep]]:
         return {"x": self._sweeps_x, "y": self._sweeps_y}
 
-    def get_flick_counts(self) -> dict[str, int]:
-        """Count sweeps that qualify as flicks (above velocity threshold)."""
-        x_flicks = sum(1 for s in self._sweeps_x if s.peak_velocity >= MIN_FLICK_VELOCITY_PX_S)
-        y_flicks = sum(1 for s in self._sweeps_y if s.peak_velocity >= MIN_FLICK_VELOCITY_PX_S)
-        return {"x": x_flicks, "y": y_flicks}
+    def get_click_aim_events(self) -> list[ClickAimEvent]:
+        return self._click_aim_events
 
     # --- Stage 1: Noise filtering ---
 
@@ -134,14 +111,13 @@ class OvershootDetector:
             prev_dx = smoothed_x
             prev_dy = smoothed_y
 
-    # --- Stage 2: Sweep segmentation ---
+    # --- Stage 2: Sweep segmentation (still needed for rowing) ---
 
     def _build_sweeps(self, smoothed: list[float], axis: str) -> list[Sweep]:
         sweeps: list[Sweep] = []
         if not smoothed:
             return sweeps
 
-        # Find first non-zero to start
         sweep_start = 0
         current_sign = 0
         for i, v in enumerate(smoothed):
@@ -151,7 +127,7 @@ class OvershootDetector:
                 current_sign = s
                 break
         else:
-            return sweeps  # all zeros
+            return sweeps
 
         for i in range(sweep_start + 1, len(smoothed)):
             s = _sign(smoothed[i])
@@ -163,7 +139,6 @@ class OvershootDetector:
                 sweep_start = i
                 current_sign = s
 
-        # Final sweep
         sweep = self._make_sweep(axis, sweep_start, len(smoothed) - 1, smoothed)
         if sweep:
             sweeps.append(sweep)
@@ -183,7 +158,6 @@ class OvershootDetector:
         if abs(total_disp) < MIN_SWEEP_PIXELS:
             return None
 
-        # Compute velocities
         peak_vel = 0.0
         for i in range(start, end + 1):
             if i > 0:
@@ -209,235 +183,127 @@ class OvershootDetector:
         self._sweeps_x = self._build_sweeps(self._smoothed_dx, "x")
         self._sweeps_y = self._build_sweeps(self._smoothed_dy, "y")
 
-    # --- Stage 3: Overshoot classification ---
+    # --- Stage 3: Click-centric aim analysis ---
 
-    def _classify_axis(self, sweeps: list[Sweep]):
-        for i in range(len(sweeps) - 1):
-            a = sweeps[i]
-            b = sweeps[i + 1]
-
-            # Must be a direction reversal
-            if _sign(a.total_displacement) == _sign(b.total_displacement):
-                continue
-
-            # Condition 1: Time gap
-            gap = b.start_time - a.end_time
-            if gap > MAX_CORRECTION_GAP_S:
-                continue
-
-            # Condition 2: Magnitude ratio
-            ratio = abs(b.total_displacement) / abs(a.total_displacement)
-            if ratio > MAX_CORRECTION_RATIO:
-                continue
-
-            # Condition 3: Initial sweep was a flick
-            if a.peak_velocity < MIN_FLICK_VELOCITY_PX_S:
-                continue
-
-            # Condition 4: Correction is slower than the flick
-            if b.mean_velocity >= a.peak_velocity * VELOCITY_RATIO_THRESHOLD:
-                continue
-
-            # Condition 5: Correction is brief
-            if b.duration > MAX_CORRECTION_DURATION_S:
-                continue
-
-            overshoot_dist = abs(b.total_displacement)
-            overshoot_pct = (overshoot_dist / abs(a.total_displacement)) * 100.0
-
-            self._events.append(OvershootEvent(
-                axis=a.axis,
-                initial_sweep=a,
-                correction_sweep=b,
-                overshoot_distance=overshoot_dist,
-                overshoot_percentage=overshoot_pct,
-                timestamp=b.start_time,
-            ))
-
-    def _classify_overshoots(self):
-        self._classify_axis(self._sweeps_x)
-        self._classify_axis(self._sweeps_y)
-
-    # --- Stage 4: Swirl (2D overshoot) detection ---
-
-    def get_swirl_events(self) -> list[SwirlEvent]:
-        return self._swirl_events
-
-    def _compute_2d_velocities(self) -> tuple[list[float], list[float], list[float], list[float]]:
-        """Compute per-sample 2D velocity vectors. Returns (vx, vy, speed, angle)."""
-        n = len(self._samples)
-        vx = [0.0] * n
-        vy = [0.0] * n
-        speed = [0.0] * n
-        angle = [0.0] * n
-
-        for i in range(1, n):
-            dt = self._samples[i].timestamp - self._samples[i - 1].timestamp
-            if dt <= 0:
-                continue
-            vx[i] = self._smoothed_dx[i] / dt
-            vy[i] = self._smoothed_dy[i] / dt
-            speed[i] = math.hypot(vx[i], vy[i])
-            angle[i] = math.atan2(vy[i], vx[i])
-
-        return vx, vy, speed, angle
-
-    def _find_flick_segments(self, speed: list[float]) -> list[tuple[int, int]]:
-        """Find contiguous runs where 2D speed >= flick threshold."""
-        segments = []
-        in_flick = False
-        start = 0
-
-        for i in range(1, len(speed)):
-            if speed[i] >= MIN_FLICK_VELOCITY_PX_S:
-                if not in_flick:
-                    start = i
-                    in_flick = True
-            else:
-                if in_flick:
-                    segments.append((start, i - 1))
-                    in_flick = False
-
-        if in_flick:
-            segments.append((start, len(speed) - 1))
-
-        return segments
-
-    def _check_swirl_correction(
-        self, flick_start: int, flick_end: int,
-        vx: list[float], vy: list[float], speed: list[float], angle: list[float],
-    ) -> SwirlEvent | None:
-        """Check if a swirl correction follows the given flick."""
-        samples = self._samples
-        n = len(samples)
-
-        # Compute flick properties
-        flick_dx = sum(self._smoothed_dx[flick_start:flick_end + 1])
-        flick_dy = sum(self._smoothed_dy[flick_start:flick_end + 1])
-        flick_mag = math.hypot(flick_dx, flick_dy)
-        if flick_mag < MIN_SWEEP_PIXELS:
-            return None
-        flick_dir = math.atan2(flick_dy, flick_dx)
-        flick_peak_vel = max(speed[flick_start:flick_end + 1])
-
-        # Scan for correction starting right after flick
-        corr_start = flick_end + 1
-        if corr_start >= n:
-            return None
-
-        flick_end_time = samples[flick_end].timestamp
-        max_corr_end_time = flick_end_time + MAX_SWIRL_CORRECTION_S
-
-        # Find correction end (within time window, while speed is below flick)
-        corr_end = corr_start
-        cumulative_angle = 0.0
-        corr_dx = 0.0
-        corr_dy = 0.0
-        peak_corr_vel = 0.0
-        total_corr_speed = 0.0
-        corr_count = 0
-
-        for i in range(corr_start, n):
-            if samples[i].timestamp > max_corr_end_time:
-                break
-
-            corr_end = i
-            corr_dx += self._smoothed_dx[i]
-            corr_dy += self._smoothed_dy[i]
-            peak_corr_vel = max(peak_corr_vel, speed[i])
-            total_corr_speed += speed[i]
-            corr_count += 1
-
-            # Track angle rotation
-            if i > corr_start and speed[i] > DEAD_ZONE_PIXELS and speed[i - 1] > DEAD_ZONE_PIXELS:
-                delta = angle[i] - angle[i - 1]
-                # Wrap to [-pi, pi]
-                delta = math.atan2(math.sin(delta), math.cos(delta))
-                cumulative_angle += abs(delta)
-
-        if corr_count < 2:
-            return None
-
-        corr_mag = math.hypot(corr_dx, corr_dy)
-        if corr_mag < MIN_SWEEP_PIXELS:
-            return None
-
-        # Check swirl conditions:
-        # 1. Angle rotation threshold (correction arc curves)
-        if cumulative_angle < MIN_SWIRL_ANGLE_RAD:
-            return None
-
-        # 2. Velocity decay (correction is slower than flick)
-        mean_corr_vel = total_corr_speed / corr_count
-        if mean_corr_vel >= flick_peak_vel * VELOCITY_RATIO_THRESHOLD:
-            return None
-
-        # 3. Correction opposes flick direction (dot product)
-        # Normalize and compute dot product
-        dot = (corr_dx * flick_dx + corr_dy * flick_dy) / (corr_mag * flick_mag)
-        if dot > SWIRL_DOT_THRESHOLD:
-            return None
-
-        # 4. Magnitude ratio
-        ratio = corr_mag / flick_mag
-        if ratio > MAX_CORRECTION_RATIO:
-            return None
-
-        overshoot_pct = ratio * 100.0
-
-        return SwirlEvent(
-            flick_start_index=flick_start,
-            flick_end_index=flick_end,
-            flick_start_time=samples[flick_start].timestamp,
-            flick_end_time=samples[flick_end].timestamp,
-            flick_displacement_x=flick_dx,
-            flick_displacement_y=flick_dy,
-            flick_magnitude=flick_mag,
-            flick_peak_velocity=flick_peak_vel,
-            flick_direction=flick_dir,
-            correction_start_index=corr_start,
-            correction_end_index=corr_end,
-            correction_start_time=samples[corr_start].timestamp,
-            correction_end_time=samples[corr_end].timestamp,
-            correction_displacement_x=corr_dx,
-            correction_displacement_y=corr_dy,
-            correction_magnitude=corr_mag,
-            overshoot_percentage=overshoot_pct,
-            total_angle_rotation=cumulative_angle,
-            peak_correction_velocity=peak_corr_vel,
-            timestamp=samples[corr_start].timestamp,
-        )
-
-    def _classify_swirls(self):
-        """Main swirl detection: find 2D flick+correction arcs."""
-        vx, vy, speed, angle = self._compute_2d_velocities()
-        flick_segments = self._find_flick_segments(speed)
-
-        for start, end in flick_segments:
-            event = self._check_swirl_correction(start, end, vx, vy, speed, angle)
-            if event:
-                self._swirl_events.append(event)
-
-    def _merge_events(self):
-        """Remove per-axis OvershootEvents that overlap with SwirlEvents."""
-        if not self._swirl_events:
+    def _classify_click_aims(self):
+        """For each click, analyze the approach and correction phases using RAW data."""
+        if not self._click_times:
             return
 
-        merged = []
-        for oe in self._events:
-            overlaps = False
-            for se in self._swirl_events:
-                # Check if correction windows overlap
-                oe_start = oe.correction_sweep.start_time
-                oe_end = oe.correction_sweep.end_time
-                if oe_start <= se.correction_end_time and oe_end >= se.correction_start_time:
-                    overlaps = True
-                    break
-            if not overlaps:
-                merged.append(oe)
-        self._events = merged
+        import bisect
+        timestamps = [s.timestamp for s in self._samples]
+        n = len(self._samples)
 
-    # --- Stage 5: Rowing classification ---
+        for click_t in self._click_times:
+            before_start_t = click_t - CLICK_WINDOW_BEFORE_S
+            after_end_t = click_t + CLICK_WINDOW_AFTER_S
+
+            i_start = bisect.bisect_left(timestamps, before_start_t)
+            i_click = bisect.bisect_right(timestamps, click_t)
+            i_end = bisect.bisect_right(timestamps, after_end_t)
+
+            # Need at least a few samples before the click
+            if i_click - i_start < 2:
+                continue
+
+            # --- Approach phase: find peak velocity using RAW data ---
+            peak_velocity = 0.0
+            peak_index = i_start
+            speeds_before: list[tuple[int, float]] = []
+
+            for i in range(max(i_start, 1), i_click):
+                dt = self._samples[i].timestamp - self._samples[i - 1].timestamp
+                if dt > 0:
+                    # Use RAW dx/dy for velocity calculation
+                    spd = math.hypot(
+                        self._samples[i].dx / dt,
+                        self._samples[i].dy / dt,
+                    )
+                    speeds_before.append((i, spd))
+                    if spd > peak_velocity:
+                        peak_velocity = spd
+                        peak_index = i
+
+            if peak_velocity < MIN_FLICK_VELOCITY_PX_S:
+                # No significant flick before this click
+                continue
+
+            # Find where approach transitions to correction:
+            # velocity drops below threshold of peak
+            velocity_threshold = peak_velocity * CLICK_APPROACH_VELOCITY_DROP
+            transition_index = i_click  # default: transition right at click
+
+            for idx, spd in speeds_before:
+                if idx > peak_index and spd <= velocity_threshold:
+                    transition_index = idx
+                    break
+
+            # Approach displacement (raw, from start to transition)
+            approach_disp = 0.0
+            for i in range(i_start, min(transition_index, i_click)):
+                approach_disp += math.hypot(
+                    self._samples[i].dx,
+                    self._samples[i].dy,
+                )
+
+            approach_duration = 0.0
+            if i_start < len(timestamps) and transition_index < len(timestamps):
+                approach_duration = timestamps[min(transition_index, i_click) - 1] - timestamps[i_start] if transition_index > i_start else 0.0
+
+            if approach_disp < 1.0:
+                continue
+
+            # --- Correction phase: from transition to click, using RAW data ---
+            correction_mag = 0.0
+            dir_changes = 0
+            angle_rotation = 0.0
+            prev_angle = None
+            correction_start_t = timestamps[transition_index] if transition_index < n else click_t
+
+            # Also include samples after the click (post-click jitter)
+            corr_range_start = transition_index
+            corr_range_end = min(i_end, n)
+
+            for i in range(corr_range_start, corr_range_end):
+                # Use RAW data
+                dx = self._samples[i].dx
+                dy = self._samples[i].dy
+                step = math.hypot(dx, dy)
+                correction_mag += step
+
+                if step > 0.5:  # ignore tiny noise
+                    angle = math.atan2(dy, dx)
+                    if prev_angle is not None:
+                        delta = math.atan2(
+                            math.sin(angle - prev_angle),
+                            math.cos(angle - prev_angle),
+                        )
+                        angle_rotation += abs(delta)
+                        if abs(delta) > math.pi / 3:  # >60° = direction change
+                            dir_changes += 1
+                    prev_angle = angle
+
+            correction_duration = (timestamps[min(corr_range_end - 1, n - 1)] - correction_start_t) if corr_range_end > corr_range_start else 0.0
+
+            # Overshoot percentage: correction / approach
+            overshoot_pct = (correction_mag / approach_disp * 100.0) if approach_disp > 0 else 0.0
+
+            is_swirl = angle_rotation > MIN_SWIRL_ANGLE_RAD
+
+            self._click_aim_events.append(ClickAimEvent(
+                click_time=click_t,
+                approach_peak_velocity=peak_velocity,
+                approach_displacement=approach_disp,
+                approach_duration=approach_duration,
+                correction_magnitude=correction_mag,
+                correction_direction_changes=dir_changes,
+                correction_angle_rotation=angle_rotation,
+                correction_duration=correction_duration,
+                overshoot_percentage=overshoot_pct,
+                is_swirl=is_swirl,
+            ))
+
+    # --- Stage 4: Rowing classification ---
 
     def get_rowing_events(self) -> list[RowingEvent]:
         return self._rowing_events

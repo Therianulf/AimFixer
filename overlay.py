@@ -29,6 +29,7 @@ from config import (
     OVERLAY_INSTRUCTIONS_FONT_SIZE,
     OVERLAY_STATUS_FONT_SIZE,
     OVERLAY_TITLE_FONT_SIZE,
+    OVERLAY_RIGHT_OFFSET,
     OVERLAY_TOP_OFFSET,
     OVERLAY_WARNING_FLASH_S,
     OVERLAY_WIDTH,
@@ -45,11 +46,12 @@ TITLE_HEIGHT = 36
 STATUS_HEIGHT = 32
 
 _INSTRUCTIONS_TEXT = (
-    "\u2022 Do NOT move your character (no WASD)\n"
-    "\u2022 Use a single-shot weapon only\n"
+    "Tips:\n"
+    "\u2022 Stand still \u2014 avoid moving your character\n"
+    "\u2022 Use a single-shot weapon\n"
     "\u2022 Flick quickly between targets\n"
-    "\u2022 Only fire when 100% sure of a hit\n"
-    "\u2022 Stand still, pick targets at varying distances"
+    "\u2022 Only fire when you're on target\n"
+    "\u2022 Pick targets at varying distances"
 )
 
 _DARK_BG = (0.08, 0.08, 0.08)
@@ -101,7 +103,7 @@ class OverlayController(NSObject):
 
         self._current_height = OVERLAY_HEIGHT_WAITING
         screen = NSScreen.mainScreen().frame()
-        x = (screen.size.width - OVERLAY_WIDTH) / 2
+        x = screen.size.width - OVERLAY_WIDTH - OVERLAY_RIGHT_OFFSET
         y = screen.size.height - OVERLAY_TOP_OFFSET - self._current_height
 
         self._window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(

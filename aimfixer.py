@@ -108,21 +108,21 @@ def main():
 
         movement_sample_count = sum(1 for s in samples if s.during_movement)
 
-        detector = OvershootDetector(samples)
-        events = detector.detect()
-        flick_counts = detector.get_flick_counts()
+        click_times = collector.get_click_times()
+
+        detector = OvershootDetector(samples, click_times)
+        detector.detect()
+        click_aim_events = detector.get_click_aim_events()
         rowing_events = detector.get_rowing_events()
-        swirl_events = detector.get_swirl_events()
 
         result = analyze(
-            events=events,
-            flick_counts=flick_counts,
+            click_aim_events=click_aim_events,
+            total_clicks=len(click_times),
             session_duration=session_duration,
             total_samples=len(samples),
             current_dpi=dpi,
             current_sens=sens,
             rowing_events=rowing_events,
-            swirl_events=swirl_events,
             movement_sample_count=movement_sample_count,
         )
 
@@ -130,9 +130,8 @@ def main():
 
         # Stash chart data and stop overlay; main thread will show charts after
         pending["result"] = result
-        pending["events"] = events
+        pending["click_aim_events"] = click_aim_events
         pending["rowing_events"] = rowing_events
-        pending["swirl_events"] = swirl_events
         overlay.schedule(overlay.stop)
 
     # Start collector listeners + background worker thread
@@ -147,9 +146,9 @@ def main():
     # After overlay exits, show matplotlib charts on the main thread
     if "result" in pending:
         show_charts(
-            pending["result"], pending["events"],
+            pending["result"],
+            pending.get("click_aim_events", []),
             pending.get("rowing_events", []),
-            pending.get("swirl_events", []),
         )
 
 

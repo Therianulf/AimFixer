@@ -22,6 +22,7 @@ class MouseSample:
 class MouseCollector:
     def __init__(self, on_state_change=None, on_movement_key=None):
         self._samples: list[MouseSample] = []
+        self._click_times: list[float] = []
         self._collecting = False
         self._done = threading.Event()
         self._started = threading.Event()
@@ -60,6 +61,12 @@ class MouseCollector:
             during_movement=self._movement_held,
         ))
 
+    def _on_click(self, x, y, button, pressed):
+        if not self._collecting:
+            return
+        if pressed and button == mouse.Button.left:
+            self._click_times.append(time.perf_counter())
+
     def _is_movement_key(self, key) -> bool:
         if key in MOVEMENT_KEYS_SPECIAL:
             return True
@@ -74,6 +81,7 @@ class MouseCollector:
                 self._prev_x = None
                 self._prev_y = None
                 self._samples.clear()
+                self._click_times.clear()
                 self._movement_keys_down.clear()
                 self._movement_held = False
                 self._started.set()
@@ -106,7 +114,7 @@ class MouseCollector:
 
     def start(self):
         """Start listeners and wait for the full collect cycle (F6 start, F6 stop)."""
-        self._mouse_listener = mouse.Listener(on_move=self._on_move)
+        self._mouse_listener = mouse.Listener(on_move=self._on_move, on_click=self._on_click)
         self._key_listener = keyboard.Listener(
             on_press=self._on_key_press,
             on_release=self._on_key_release,
@@ -128,3 +136,6 @@ class MouseCollector:
 
     def get_samples(self) -> list[MouseSample]:
         return list(self._samples)
+
+    def get_click_times(self) -> list[float]:
+        return list(self._click_times)
