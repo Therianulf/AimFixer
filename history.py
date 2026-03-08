@@ -64,6 +64,8 @@ def save_session(
             "new_sens": round(result.new_sens_combined, 2),
             "new_dpi": result.new_dpi_combined,
             "increase_pct": round(result.combined_increase_pct, 1),
+            "dpi_advisory": result.dpi_advisory,
+            "suggested_dpi": result.suggested_dpi,
         },
     }
 

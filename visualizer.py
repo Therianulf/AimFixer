@@ -68,13 +68,8 @@ def print_summary(result: AnalysisResult, previous_session: dict | None = None):
 
     if result.possibly_too_low and result.combined_increase_pct > 0.5:
         print(f"  Sensitivity too LOW - rowing detected!")
-        print(f"  Increase overall sensitivity by ~{result.combined_increase_pct:.0f}%")
-        print()
-        print(f"  Option A - Adjust in-game sens only:")
+        print(f"  Increase in-game sensitivity by ~{result.combined_increase_pct:.0f}%")
         print(f"    {result.current_sens} -> {result.new_sens_increase:.2f}")
-        print()
-        print(f"  Option B - Adjust DPI only:")
-        print(f"    {result.current_dpi} -> {result.new_dpi_increase}")
         print()
     elif result.possibly_too_low:
         print("  NOTE: Rowing detected. Your sensitivity might")
@@ -82,16 +77,27 @@ def print_summary(result: AnalysisResult, previous_session: dict | None = None):
         print()
 
     if result.combined_reduction_pct > 0.5:
-        print(f"  Reduce overall sensitivity by ~{result.combined_reduction_pct:.0f}%")
-        print()
-        print(f"  Option A - Adjust in-game sens only:")
+        print(f"  Reduce in-game sensitivity by ~{result.combined_reduction_pct:.0f}%")
         print(f"    {result.current_sens} -> {result.new_sens_combined:.2f}")
-        print()
-        print(f"  Option B - Adjust DPI only:")
-        print(f"    {result.current_dpi} -> {result.new_dpi_combined}")
     elif not result.possibly_too_low:
         print("  Your sensitivity looks well-tuned!")
         print("  No significant overshoot detected.")
+
+    # DPI advisory (tiered)
+    if result.dpi_advisory:
+        print()
+        if result.dpi_advisory_level == "warning":
+            print("-" * 50)
+            print("  DPI WARNING")
+            print("-" * 50)
+        else:
+            print("  TIP:")
+        print(f"  {result.dpi_advisory}")
+        print(f"  Suggested DPI: {result.suggested_dpi}")
+        if result.dpi_advisory_level == "warning":
+            print()
+            print("  Adjust DPI once in your mouse software,")
+            print("  then re-calibrate your in-game sensitivity.")
 
     # Session comparison
     if previous_session:
