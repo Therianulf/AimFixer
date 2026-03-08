@@ -1,9 +1,10 @@
+from __future__ import annotations
 import matplotlib.pyplot as plt
 from analyzer import AnalysisResult
 from config import MIN_EVENTS_FOR_RECOMMENDATION, MIN_ROWING_EVENTS_FOR_RECOMMENDATION
 
 
-def print_summary(result: AnalysisResult):
+def print_summary(result: AnalysisResult, previous_session: dict | None = None):
     duration_m = int(result.session_duration // 60)
     duration_s = int(result.session_duration % 60)
 
@@ -26,6 +27,15 @@ def print_summary(result: AnalysisResult):
         print(f"  Mean overshoot:      {ca.mean_overshoot_pct:.1f}%")
         print(f"  Median correction:   {ca.median_correction_magnitude:.1f}px over {ca.median_correction_duration_ms:.0f}ms")
         print(f"  Median dir changes:  {ca.median_direction_changes:.0f} per shot")
+
+    # Fire rate / hit factor
+    if result.fire_rate:
+        fr = result.fire_rate
+        interval_str = f"{fr.median_shot_interval_ms:.0f}ms between shots"
+        print()
+        print(f"  Fire rate:           {fr.shots_per_minute:.0f} shots/min ({interval_str})")
+        print(f"  Aim efficiency:      {fr.aim_efficiency:.2f}")
+        print(f"  Hit factor:          {fr.hit_factor:.2f}")
 
     # Rowing stats
     _print_rowing(result)
@@ -83,7 +93,53 @@ def print_summary(result: AnalysisResult):
         print("  Your sensitivity looks well-tuned!")
         print("  No significant overshoot detected.")
 
+    # Session comparison
+    if previous_session:
+        _print_comparison(result, previous_session)
+
     print("=" * 50)
+
+
+def _delta_str(old: float, new: float, lower_is_good: bool = False) -> str:
+    if old == 0:
+        return ""
+    pct = (new - old) / abs(old) * 100.0
+    if pct > 0:
+        arrow = "v" if lower_is_good else "^"
+    elif pct < 0:
+        arrow = "^" if lower_is_good else "v"
+    else:
+        return "  (no change)"
+    return f"  ({arrow} {abs(pct):.0f}%)"
+
+
+def _print_comparison(result: AnalysisResult, prev: dict):
+    prev_settings = prev.get("settings", {})
+    prev_dpi = prev_settings.get("dpi", "?")
+    prev_sens = prev_settings.get("sensitivity", "?")
+
+    prev_ca = prev.get("click_analysis", {})
+    prev_overshoot = prev_ca.get("median_overshoot_pct", 0.0)
+
+    prev_fr = prev.get("fire_rate") or {}
+    prev_hit_factor = prev_fr.get("hit_factor", 0.0)
+    prev_spm = prev_fr.get("shots_per_minute", 0.0)
+
+    ca = result.click_analysis
+    cur_overshoot = ca.median_overshoot_pct
+    cur_hit_factor = result.fire_rate.hit_factor if result.fire_rate else 0.0
+    cur_spm = result.fire_rate.shots_per_minute if result.fire_rate else 0.0
+
+    print()
+    print(f"  vs Previous ({prev_dpi} DPI / {prev_sens} sens):")
+    print(f"    Overshoot:    {prev_overshoot:.1f}% -> {cur_overshoot:.1f}%"
+          f"{_delta_str(prev_overshoot, cur_overshoot, lower_is_good=True)}")
+    if prev_hit_factor or cur_hit_factor:
+        print(f"    Hit factor:   {prev_hit_factor:.2f} -> {cur_hit_factor:.2f}"
+              f"{_delta_str(prev_hit_factor, cur_hit_factor)}")
+    if prev_spm or cur_spm:
+        print(f"    Fire rate:    {prev_spm:.0f} -> {cur_spm:.0f} spm"
+              f"{_delta_str(prev_spm, cur_spm)}")
 
 
 def _print_rowing(result: AnalysisResult):
@@ -165,23 +221,23 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
     ax.set_xlabel("Direction Changes")
     ax.set_ylabel("Count")
 
-    # Panel 5: Rowing chain length histogram
-    ax = axes[2][0]
+    # Bottom row: rowing panels OR shot interval panels
     if rowing_events:
+        # Panel 5: Rowing chain length histogram
+        ax = axes[2][0]
         chain_lengths = [e.chain_length for e in rowing_events]
         colors = ["#4a90d9" if e.axis == "x" else "#e8913a" for e in rowing_events]
         ax.bar(range(len(chain_lengths)), chain_lengths, color=colors, alpha=0.85)
-        ax.axhline(y=2, color="gray", linestyle="--", alpha=0.5, label="Min threshold")
+        ax.axhline(y=3, color="gray", linestyle="--", alpha=0.5, label="Min threshold")
         ax.scatter([], [], c="#4a90d9", label="Horizontal")
         ax.scatter([], [], c="#e8913a", label="Vertical")
         ax.legend()
-    ax.set_title("Rowing Chain Lengths")
-    ax.set_xlabel("Event #")
-    ax.set_ylabel("Sweeps in chain")
+        ax.set_title("Rowing Chain Lengths")
+        ax.set_xlabel("Event #")
+        ax.set_ylabel("Sweeps in chain")
 
-    # Panel 6: Rowing events over time
-    ax = axes[2][1]
-    if rowing_events:
+        # Panel 6: Rowing events over time
+        ax = axes[2][1]
         t0 = rowing_events[0].timestamp
         times = [(e.timestamp - t0) for e in rowing_events]
         ratios = [e.increase_ratio for e in rowing_events]
@@ -190,9 +246,45 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
         ax.scatter([], [], c="#4a90d9", label="Horizontal")
         ax.scatter([], [], c="#e8913a", label="Vertical")
         ax.legend()
-    ax.set_title("Rowing Events Over Time")
-    ax.set_xlabel("Time (seconds)")
-    ax.set_ylabel("Increase ratio (total/max)")
+        ax.set_title("Rowing Events Over Time")
+        ax.set_xlabel("Time (seconds)")
+        ax.set_ylabel("Increase ratio (total/max)")
+    elif click_aim_events:
+        # Panel 5: Shot interval histogram
+        ax = axes[2][0]
+        if len(click_aim_events) >= 2:
+            sorted_clicks = sorted(e.click_time for e in click_aim_events)
+            intervals = [
+                (sorted_clicks[i] - sorted_clicks[i - 1]) * 1000
+                for i in range(1, len(sorted_clicks))
+            ]
+            ax.hist(intervals, bins=20, color="#27ae60", edgecolor="white", alpha=0.85)
+            from statistics import median as _median
+            med_interval = _median(intervals)
+            ax.axvline(med_interval, color="red", linestyle="--",
+                       label=f"Median: {med_interval:.0f}ms")
+            ax.legend()
+        ax.set_title("Shot Interval Distribution")
+        ax.set_xlabel("Interval (ms)")
+        ax.set_ylabel("Count")
+
+        # Panel 6: Shot intervals over time
+        ax = axes[2][1]
+        if len(click_aim_events) >= 2:
+            sorted_clicks = sorted(e.click_time for e in click_aim_events)
+            t0 = sorted_clicks[0]
+            shot_times = [(sorted_clicks[i] - t0) for i in range(1, len(sorted_clicks))]
+            intervals = [
+                (sorted_clicks[i] - sorted_clicks[i - 1]) * 1000
+                for i in range(1, len(sorted_clicks))
+            ]
+            ax.scatter(shot_times, intervals, c="#27ae60", alpha=0.6, s=30)
+        ax.set_title("Shot Intervals Over Time")
+        ax.set_xlabel("Time (seconds)")
+        ax.set_ylabel("Interval (ms)")
+    else:
+        axes[2][0].set_visible(False)
+        axes[2][1].set_visible(False)
 
     plt.tight_layout()
     plt.show()

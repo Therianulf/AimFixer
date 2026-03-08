@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from statistics import median, mean
 from detector import ClickAimEvent, RowingEvent
 from config import (
-    CORRECTION_FACTOR, MIN_EVENTS_FOR_RECOMMENDATION,
+    CORRECTION_FACTOR, MAX_REDUCTION_PCT, MIN_EVENTS_FOR_RECOMMENDATION,
     X_WEIGHT, Y_WEIGHT, DPI_STEP,
     ROWING_CORRECTION_FACTOR, MIN_ROWING_EVENTS_FOR_RECOMMENDATION,
 )
@@ -22,6 +22,16 @@ class ClickAnalysisResult:
     median_direction_changes: float
     recommended_reduction_pct: float
     overshoot_percentages: list[float]
+
+
+@dataclass
+class FireRateResult:
+    total_shots: int
+    shots_per_minute: float
+    median_shot_interval_ms: float
+    mean_shot_interval_ms: float
+    aim_efficiency: float          # 0-1, higher = less overshoot
+    hit_factor: float              # (shots_per_minute / 60) * aim_efficiency
 
 
 @dataclass
@@ -51,6 +61,8 @@ class AnalysisResult:
     combined_increase_pct: float = 0.0
     new_sens_increase: float = 0.0
     new_dpi_increase: int = 0
+    # Fire rate / hit factor
+    fire_rate: FireRateResult | None = None
     # Contamination
     movement_contamination_pct: float = 0.0
 
@@ -91,7 +103,10 @@ def _compute_click_analysis(
     swirl_pct = swirl_count / n * 100.0
 
     med_pct = median(pcts)
-    reduction = med_pct * CORRECTION_FACTOR * _confidence_weight(n)
+    reduction = min(
+        med_pct * CORRECTION_FACTOR * _confidence_weight(n),
+        MAX_REDUCTION_PCT,
+    )
 
     return ClickAnalysisResult(
         total_clicks=total_clicks,
@@ -128,6 +143,35 @@ def _compute_rowing_axis(events: list[RowingEvent]) -> RowingAxisResult | None:
     )
 
 
+def _compute_fire_rate(
+    click_times: list[float],
+    session_duration: float,
+    median_overshoot_pct: float,
+) -> FireRateResult | None:
+    if len(click_times) < 2 or session_duration <= 0:
+        return None
+
+    sorted_times = sorted(click_times)
+    intervals = [
+        (sorted_times[i] - sorted_times[i - 1]) * 1000  # ms
+        for i in range(1, len(sorted_times))
+    ]
+
+    total_shots = len(sorted_times)
+    shots_per_minute = total_shots / session_duration * 60.0
+    aim_efficiency = max(0.0, min(1.0, 1.0 - median_overshoot_pct / 200.0))
+    hit_factor = (shots_per_minute / 60.0) * aim_efficiency
+
+    return FireRateResult(
+        total_shots=total_shots,
+        shots_per_minute=shots_per_minute,
+        median_shot_interval_ms=median(intervals),
+        mean_shot_interval_ms=mean(intervals),
+        aim_efficiency=aim_efficiency,
+        hit_factor=hit_factor,
+    )
+
+
 def analyze(
     click_aim_events: list[ClickAimEvent],
     total_clicks: int,
@@ -137,6 +181,7 @@ def analyze(
     current_sens: float,
     rowing_events: list[RowingEvent] | None = None,
     movement_sample_count: int = 0,
+    click_times: list[float] | None = None,
 ) -> AnalysisResult:
     # Click-centric analysis
     click_analysis = _compute_click_analysis(click_aim_events, total_clicks)
@@ -172,6 +217,13 @@ def analyze(
     new_sens_increase = current_sens * (1 + combined_increase / 100.0)
     new_dpi_increase = _snap_dpi(current_dpi * (1 + combined_increase / 100.0))
 
+    # Fire rate / hit factor
+    fire_rate = None
+    if click_times:
+        fire_rate = _compute_fire_rate(
+            click_times, session_duration, click_analysis.median_overshoot_pct,
+        )
+
     return AnalysisResult(
         session_duration=session_duration,
         total_samples=total_samples,
@@ -182,6 +234,7 @@ def analyze(
         new_sens_combined=new_sens_combined,
         new_dpi_combined=new_dpi_combined,
         possibly_too_low=possibly_too_low,
+        fire_rate=fire_rate,
         x_rowing=x_rowing,
         y_rowing=y_rowing,
         combined_increase_pct=combined_increase,

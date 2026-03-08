@@ -8,8 +8,9 @@ from config import (
     MIN_FLICK_VELOCITY_PX_S,
     MIN_ROWING_GAP_S, MAX_ROWING_GAP_S,
     MIN_ROWING_SWEEPS, MIN_ROWING_SWEEP_VELOCITY,
+    MIN_ROWING_SWEEP_DISPLACEMENT,
     MIN_SWIRL_ANGLE_RAD,
-    CLICK_WINDOW_BEFORE_S, CLICK_WINDOW_AFTER_S,
+    CLICK_WINDOW_BEFORE_S,
     CLICK_APPROACH_VELOCITY_DROP,
 )
 
@@ -308,87 +309,6 @@ class OvershootDetector:
                 is_swirl=is_swirl,
             ))
 
-    def debug_click_analysis(self):
-        """Print diagnostic info about why clicks were/weren't analyzed."""
-        if not self._samples:
-            print("\n  DEBUG: No samples")
-            return
-
-        # Global sample stats
-        nonzero = sum(1 for s in self._samples if s.dx != 0 or s.dy != 0)
-        max_dx = max(abs(s.dx) for s in self._samples)
-        max_dy = max(abs(s.dy) for s in self._samples)
-        print(f"\n  DEBUG Sample Stats:")
-        print(f"    Total samples: {len(self._samples)}")
-        print(f"    Non-zero dx/dy: {nonzero} ({nonzero/len(self._samples)*100:.1f}%)")
-        print(f"    Max |dx|={max_dx:.1f}, max |dy|={max_dy:.1f}")
-        # Show first 10 non-zero samples
-        shown = 0
-        for i, s in enumerate(self._samples):
-            if s.dx != 0 or s.dy != 0:
-                print(f"      [{i}]: dx={s.dx:.1f} dy={s.dy:.1f} x={s.x} y={s.y}")
-                shown += 1
-                if shown >= 10:
-                    break
-
-        if not self._click_times:
-            print("    No click times recorded")
-            return
-
-        import bisect
-        timestamps = [s.timestamp for s in self._samples]
-
-        too_few_samples = 0
-        below_velocity = 0
-        analyzed = 0
-        peak_velocities = []
-
-        for click_t in self._click_times:
-            before_start_t = click_t - CLICK_WINDOW_BEFORE_S
-            i_start = bisect.bisect_left(timestamps, before_start_t)
-            i_click = bisect.bisect_right(timestamps, click_t)
-
-            if i_click - i_start < 2:
-                too_few_samples += 1
-                continue
-
-            peak_velocity = 0.0
-            for i in range(max(i_start, 1), i_click):
-                dt = self._samples[i].timestamp - self._samples[i - 1].timestamp
-                if dt > 0:
-                    spd = math.hypot(
-                        self._samples[i].dx / dt,
-                        self._samples[i].dy / dt,
-                    )
-                    peak_velocity = max(peak_velocity, spd)
-
-            peak_velocities.append(peak_velocity)
-
-            if peak_velocity < MIN_FLICK_VELOCITY_PX_S:
-                below_velocity += 1
-            else:
-                analyzed += 1
-
-        print(f"\n  DEBUG Click Analysis:")
-        print(f"    Total clicks: {len(self._click_times)}")
-        print(f"    Too few samples before click: {too_few_samples}")
-        print(f"    Below velocity threshold ({MIN_FLICK_VELOCITY_PX_S}): {below_velocity}")
-        print(f"    Analyzed (passed velocity): {analyzed}")
-        if peak_velocities:
-            peak_velocities.sort()
-            print(f"    Peak velocities: min={peak_velocities[0]:.0f}, "
-                  f"median={peak_velocities[len(peak_velocities)//2]:.0f}, "
-                  f"max={peak_velocities[-1]:.0f} px/s")
-
-        # Debug first click's window in detail
-        if self._click_times and timestamps:
-            ct = self._click_times[0]
-            i_start = bisect.bisect_left(timestamps, ct - CLICK_WINDOW_BEFORE_S)
-            i_click = bisect.bisect_right(timestamps, ct)
-            nz = sum(1 for i in range(i_start, i_click)
-                     if self._samples[i].dx != 0 or self._samples[i].dy != 0)
-            print(f"\n    First click window ({i_click - i_start} samples, {nz} non-zero):")
-
     # --- Stage 4: Rowing classification ---
 
     def get_rowing_events(self) -> list[RowingEvent]:
@@ -412,8 +332,9 @@ class OvershootDetector:
             gap = curr.start_time - prev.end_time
             gap_ok = MIN_ROWING_GAP_S <= gap <= MAX_ROWING_GAP_S
             fast_enough = curr.peak_velocity >= MIN_ROWING_SWEEP_VELOCITY
+            big_enough = abs(curr.total_displacement) >= MIN_ROWING_SWEEP_DISPLACEMENT
 
-            if same_dir and gap_ok and fast_enough:
+            if same_dir and gap_ok and fast_enough and big_enough:
                 chain.append(curr)
             else:
                 self._emit_rowing_event(chain)
@@ -431,6 +352,16 @@ class OvershootDetector:
         gaps = []
         for i in range(1, len(chain)):
             gaps.append(chain[i].start_time - chain[i - 1].end_time)
+
+        # Gap consistency check: real rowing has consistent lift timing.
+        # Reject if coefficient of variation > 1.0 (random corrections are erratic).
+        if gaps:
+            mean_gap = sum(gaps) / len(gaps)
+            if mean_gap > 0:
+                std_gap = (sum((g - mean_gap) ** 2 for g in gaps) / len(gaps)) ** 0.5
+                cv = std_gap / mean_gap
+                if cv > 1.0:
+                    return
 
         self._rowing_events.append(RowingEvent(
             axis=chain[0].axis,

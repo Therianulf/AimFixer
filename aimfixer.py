@@ -115,9 +115,6 @@ def main():
         click_aim_events = detector.get_click_aim_events()
         rowing_events = detector.get_rowing_events()
 
-        # Debug: show why clicks were/weren't analyzed
-        detector.debug_click_analysis()
-
         result = analyze(
             click_aim_events=click_aim_events,
             total_clicks=len(click_times),
@@ -127,9 +124,15 @@ def main():
             current_sens=sens,
             rowing_events=rowing_events,
             movement_sample_count=movement_sample_count,
+            click_times=click_times,
         )
 
-        print_summary(result)
+        # Save session and load previous for comparison
+        from history import save_session, load_previous_session
+        save_session(result, click_aim_events, rowing_events, click_times)
+        previous_session = load_previous_session()
+
+        print_summary(result, previous_session=previous_session)
 
         # Stash chart data and stop overlay; main thread will show charts after
         pending["result"] = result

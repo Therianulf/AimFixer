@@ -12,7 +12,8 @@ MIN_SWEEP_PIXELS = 1.5
 MIN_FLICK_VELOCITY_PX_S = 100.0
 
 # Sensitivity recommendation
-CORRECTION_FACTOR = 0.60
+CORRECTION_FACTOR = 0.15            # Recalibrated for path-length-based overshoot (50-200% range)
+MAX_REDUCTION_PCT = 30.0            # Never recommend more than 30% reduction in one step
 MIN_EVENTS_FOR_RECOMMENDATION = 10
 X_WEIGHT = 1.5
 Y_WEIGHT = 1.0
@@ -24,12 +25,13 @@ WARP_THRESHOLD_PX = 100
 TOGGLE_KEY = keyboard.Key.f6
 
 # Rowing detection
-MIN_ROWING_GAP_S = 0.030           # Min gap to count as mouse lift (30ms)
+MIN_ROWING_GAP_S = 0.050           # Min gap to count as mouse lift (50ms = realistic lift minimum)
 MAX_ROWING_GAP_S = 0.500           # Max gap before it's a deliberate pause (500ms)
-MIN_ROWING_SWEEPS = 2              # Min consecutive same-dir sweeps for rowing
-MIN_ROWING_SWEEP_VELOCITY = 100.0  # Lower than flick threshold since rowing sweeps decelerate at pad edge
+MIN_ROWING_SWEEPS = 3              # Min consecutive same-dir sweeps for rowing
+MIN_ROWING_SWEEP_VELOCITY = 200.0  # Filter out slow corrections that aren't rowing
+MIN_ROWING_SWEEP_DISPLACEMENT = 10.0  # Rowing covers real distance, not micro-adjustments
 ROWING_CORRECTION_FACTOR = 0.50    # Conservative increase recommendation
-MIN_ROWING_EVENTS_FOR_RECOMMENDATION = 5
+MIN_ROWING_EVENTS_FOR_RECOMMENDATION = 8
 
 # Click-proximity analysis
 CLICK_WINDOW_BEFORE_S = 0.500       # Look 500ms before click for the flick
