@@ -35,14 +35,29 @@ MIN_ROWING_SWEEP_VELOCITY = 400.0  # Lower than flick threshold since rowing swe
 ROWING_CORRECTION_FACTOR = 0.50    # Conservative increase recommendation
 MIN_ROWING_EVENTS_FOR_RECOMMENDATION = 5
 
+# Swirl detection (2D overshoot)
+MIN_SWIRL_ANGLE_RAD = 0.785          # pi/4 = 45° minimum correction arc rotation
+MAX_SWIRL_CORRECTION_S = 0.400       # Slightly longer than 1D (arcs take more time)
+SWIRL_DOT_THRESHOLD = -0.3           # Correction must point somewhat opposite to flick
+SWIRL_WEIGHT = 2.0                   # Swirls weighted higher in combined recommendation
+
+# Movement key warning
+MOVEMENT_KEYS_SPECIAL = {keyboard.Key.up, keyboard.Key.down, keyboard.Key.left, keyboard.Key.right}
+MOVEMENT_KEYS_CHAR = {'w', 'a', 's', 'd'}
+MOVEMENT_DEBOUNCE_S = 0.5
+OVERLAY_WARNING_FLASH_S = 2.0
+
 # DPI snapping
 DPI_STEP = 50
 
 # Overlay appearance
 OVERLAY_WIDTH = 360
-OVERLAY_HEIGHT = 80
+OVERLAY_HEIGHT_WAITING = 220
+OVERLAY_HEIGHT_COMPACT = 80
+OVERLAY_HEIGHT = OVERLAY_HEIGHT_COMPACT
 OVERLAY_TOP_OFFSET = 80
 OVERLAY_BG_ALPHA = 0.80
 OVERLAY_TITLE_FONT_SIZE = 18.0
 OVERLAY_STATUS_FONT_SIZE = 14.0
+OVERLAY_INSTRUCTIONS_FONT_SIZE = 12.0
 OVERLAY_CORNER_RADIUS = 12.0

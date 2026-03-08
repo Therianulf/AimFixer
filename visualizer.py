@@ -26,8 +26,23 @@ def print_summary(result: AnalysisResult):
     _print_axis(result.x_result, "X-Axis (Horizontal)")
     _print_axis(result.y_result, "Y-Axis (Vertical)")
 
+    # Swirl stats
+    _print_swirl(result)
+
     # Rowing stats
     _print_rowing(result)
+
+    # Movement contamination warning
+    if result.movement_contamination_pct > 0:
+        print()
+        if result.movement_contamination_pct > 20:
+            print(f"  WARNING: {result.movement_contamination_pct:.1f}% of samples were")
+            print("  collected during character movement.")
+            print("  Results may be unreliable. Re-record")
+            print("  while standing still for best results.")
+        else:
+            print(f"  Note: {result.movement_contamination_pct:.1f}% of samples were")
+            print("  collected during character movement.")
 
     print()
     print("-" * 50)
@@ -90,6 +105,18 @@ def _print_axis(axis, label: str):
         print(f"    75th percentile:   {axis.p75_overshoot_pct:.1f}%")
 
 
+def _print_swirl(result: AnalysisResult):
+    sr = result.swirl_result
+    if not sr or sr.swirl_count == 0:
+        return
+    print()
+    print(f"  2D Swirl (Circular Correction) Events:")
+    print(f"    Swirls detected:   {sr.swirl_count}")
+    print(f"    Median overshoot:  {sr.median_overshoot_pct:.1f}%")
+    print(f"    Mean overshoot:    {sr.mean_overshoot_pct:.1f}%")
+    print(f"    Median rotation:   {sr.median_angle_rotation_deg:.1f} degrees")
+
+
 def _print_rowing(result: AnalysisResult):
     x_r = result.x_rowing
     y_r = result.y_rowing
@@ -109,10 +136,12 @@ def _print_rowing(result: AnalysisResult):
               f"avg gap: {y_r.mean_gap_duration_ms:.0f}ms")
 
 
-def show_charts(result: AnalysisResult, events, rowing_events=None):
+def show_charts(result: AnalysisResult, events, rowing_events=None, swirl_events=None):
     if rowing_events is None:
         rowing_events = []
-    fig, axes = plt.subplots(3, 2, figsize=(12, 12))
+    if swirl_events is None:
+        swirl_events = []
+    fig, axes = plt.subplots(4, 2, figsize=(12, 16))
     fig.suptitle("AimFixer Analysis", fontsize=14, fontweight="bold")
 
     x_pcts = result.x_result.overshoot_percentages
@@ -205,6 +234,33 @@ def show_charts(result: AnalysisResult, events, rowing_events=None):
     ax.set_title("Rowing Events Over Time")
     ax.set_xlabel("Time (seconds)")
     ax.set_ylabel("Increase ratio (total/max)")
+
+    # Panel 7: Swirl overshoot histogram
+    ax = axes[3][0]
+    swirl_pcts = result.swirl_result.overshoot_percentages if result.swirl_result else []
+    if swirl_pcts:
+        ax.hist(swirl_pcts, bins=20, color="#9b59b6", edgecolor="white", alpha=0.85)
+        ax.axvline(result.swirl_result.median_overshoot_pct, color="red",
+                    linestyle="--", label=f"Median: {result.swirl_result.median_overshoot_pct:.1f}%")
+        ax.legend()
+    ax.set_title("2D Swirl Overshoot Distribution")
+    ax.set_xlabel("Overshoot %")
+    ax.set_ylabel("Count")
+
+    # Panel 8: Swirl correction arcs (2D scatter of correction vectors)
+    ax = axes[3][1]
+    if swirl_events:
+        corr_dx = [e.correction_displacement_x for e in swirl_events]
+        corr_dy = [e.correction_displacement_y for e in swirl_events]
+        colors = [e.overshoot_percentage for e in swirl_events]
+        sc = ax.scatter(corr_dx, corr_dy, c=colors, cmap="plasma", alpha=0.7, s=40)
+        ax.axhline(0, color="gray", linewidth=0.5, alpha=0.5)
+        ax.axvline(0, color="gray", linewidth=0.5, alpha=0.5)
+        fig.colorbar(sc, ax=ax, label="Overshoot %")
+    ax.set_title("Swirl Correction Vectors")
+    ax.set_xlabel("Correction dx (pixels)")
+    ax.set_ylabel("Correction dy (pixels)")
+    ax.set_aspect("equal", adjustable="datalim")
 
     plt.tight_layout()
     plt.show()

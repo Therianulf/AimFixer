@@ -3,7 +3,10 @@ import time
 import threading
 from dataclasses import dataclass, field
 from pynput import mouse, keyboard
-from config import TOGGLE_KEY, WARP_THRESHOLD_PX
+from config import (
+    TOGGLE_KEY, WARP_THRESHOLD_PX,
+    MOVEMENT_KEYS_SPECIAL, MOVEMENT_KEYS_CHAR, MOVEMENT_DEBOUNCE_S,
+)
 
 
 @dataclass
@@ -13,10 +16,11 @@ class MouseSample:
     y: int
     dx: float
     dy: float
+    during_movement: bool = False
 
 
 class MouseCollector:
-    def __init__(self, on_state_change=None):
+    def __init__(self, on_state_change=None, on_movement_key=None):
         self._samples: list[MouseSample] = []
         self._collecting = False
         self._done = threading.Event()
@@ -26,6 +30,10 @@ class MouseCollector:
         self._mouse_listener: mouse.Listener | None = None
         self._key_listener: keyboard.Listener | None = None
         self._on_state_change = on_state_change
+        self._on_movement_key = on_movement_key
+        self._movement_held = False
+        self._movement_keys_down: set = set()
+        self._last_movement_warn = 0.0
 
     def _on_move(self, x: int, y: int):
         if not self._collecting:
@@ -48,8 +56,16 @@ class MouseCollector:
             return
 
         self._samples.append(MouseSample(
-            timestamp=now, x=x, y=y, dx=dx, dy=dy
+            timestamp=now, x=x, y=y, dx=dx, dy=dy,
+            during_movement=self._movement_held,
         ))
+
+    def _is_movement_key(self, key) -> bool:
+        if key in MOVEMENT_KEYS_SPECIAL:
+            return True
+        if hasattr(key, 'char') and key.char and key.char.lower() in MOVEMENT_KEYS_CHAR:
+            return True
+        return False
 
     def _on_key_press(self, key):
         if key == TOGGLE_KEY:
@@ -58,6 +74,8 @@ class MouseCollector:
                 self._prev_x = None
                 self._prev_y = None
                 self._samples.clear()
+                self._movement_keys_down.clear()
+                self._movement_held = False
                 self._started.set()
                 if self._on_state_change:
                     self._on_state_change("recording")
@@ -71,10 +89,28 @@ class MouseCollector:
                 else:
                     print("  Recording stopped.")
 
+        if self._collecting and self._is_movement_key(key):
+            self._movement_keys_down.add(str(key))
+            self._movement_held = True
+            if self._on_movement_key:
+                now = time.perf_counter()
+                if now - self._last_movement_warn > MOVEMENT_DEBOUNCE_S:
+                    self._last_movement_warn = now
+                    self._on_movement_key()
+
+    def _on_key_release(self, key):
+        if self._is_movement_key(key):
+            self._movement_keys_down.discard(str(key))
+            if not self._movement_keys_down:
+                self._movement_held = False
+
     def start(self):
         """Start listeners and wait for the full collect cycle (F6 start, F6 stop)."""
         self._mouse_listener = mouse.Listener(on_move=self._on_move)
-        self._key_listener = keyboard.Listener(on_press=self._on_key_press)
+        self._key_listener = keyboard.Listener(
+            on_press=self._on_key_press,
+            on_release=self._on_key_release,
+        )
         self._mouse_listener.start()
         self._key_listener.start()
 

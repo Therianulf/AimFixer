@@ -1,11 +1,12 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from statistics import median, mean
-from detector import OvershootEvent, RowingEvent
+from detector import OvershootEvent, RowingEvent, SwirlEvent
 from config import (
     CORRECTION_FACTOR, MIN_EVENTS_FOR_RECOMMENDATION,
     X_WEIGHT, Y_WEIGHT, DPI_STEP,
     ROWING_CORRECTION_FACTOR, MIN_ROWING_EVENTS_FOR_RECOMMENDATION,
+    SWIRL_WEIGHT,
 )
 
 
@@ -31,6 +32,16 @@ class RowingAxisResult:
 
 
 @dataclass
+class SwirlResult:
+    swirl_count: int
+    median_overshoot_pct: float
+    mean_overshoot_pct: float
+    median_angle_rotation_deg: float
+    recommended_reduction_pct: float
+    overshoot_percentages: list[float]
+
+
+@dataclass
 class AnalysisResult:
     session_duration: float
     total_samples: int
@@ -50,6 +61,8 @@ class AnalysisResult:
     combined_increase_pct: float = 0.0
     new_sens_increase: float = 0.0
     new_dpi_increase: int = 0
+    swirl_result: SwirlResult | None = None
+    movement_contamination_pct: float = 0.0
 
 
 def _confidence_weight(n_events: int) -> float:
@@ -114,6 +127,26 @@ def _compute_rowing_axis(events: list[RowingEvent]) -> RowingAxisResult | None:
     )
 
 
+def _compute_swirl(events: list[SwirlEvent]) -> SwirlResult | None:
+    if not events:
+        return None
+    import math
+    n = len(events)
+    pcts = [e.overshoot_percentage for e in events]
+    angles = [math.degrees(e.total_angle_rotation) for e in events]
+    med = median(pcts)
+    reduction = med * CORRECTION_FACTOR * _confidence_weight(n)
+
+    return SwirlResult(
+        swirl_count=n,
+        median_overshoot_pct=med,
+        mean_overshoot_pct=mean(pcts),
+        median_angle_rotation_deg=median(angles),
+        recommended_reduction_pct=reduction,
+        overshoot_percentages=pcts,
+    )
+
+
 def analyze(
     events: list[OvershootEvent],
     flick_counts: dict[str, int],
@@ -122,6 +155,8 @@ def analyze(
     current_dpi: int,
     current_sens: float,
     rowing_events: list[RowingEvent] | None = None,
+    swirl_events: list[SwirlEvent] | None = None,
+    movement_sample_count: int = 0,
 ) -> AnalysisResult:
     x_events = [e for e in events if e.axis == "x"]
     y_events = [e for e in events if e.axis == "y"]
@@ -129,14 +164,30 @@ def analyze(
     x_result = _compute_axis(x_events, flick_counts.get("x", 0), "x")
     y_result = _compute_axis(y_events, flick_counts.get("y", 0), "y")
 
-    # Combined reduction (X weighted more heavily)
+    # Swirl analysis
+    swirl_result = _compute_swirl(swirl_events or [])
+
+    # Combined reduction (per-axis + swirl, weighted)
+    axis_reduction = 0.0
     if x_result.recommended_reduction_pct > 0 or y_result.recommended_reduction_pct > 0:
-        combined = (
+        axis_reduction = (
             x_result.recommended_reduction_pct * X_WEIGHT +
             y_result.recommended_reduction_pct * Y_WEIGHT
         ) / (X_WEIGHT + Y_WEIGHT)
+
+    swirl_reduction = swirl_result.recommended_reduction_pct if swirl_result else 0.0
+
+    if swirl_reduction > 0 and axis_reduction > 0:
+        combined = (
+            axis_reduction * (X_WEIGHT + Y_WEIGHT) + swirl_reduction * SWIRL_WEIGHT
+        ) / (X_WEIGHT + Y_WEIGHT + SWIRL_WEIGHT)
+    elif swirl_reduction > 0:
+        combined = swirl_reduction
     else:
-        combined = 0.0
+        combined = axis_reduction
+
+    # Movement contamination
+    contamination = (movement_sample_count / total_samples * 100.0) if total_samples > 0 else 0.0
 
     # Rowing analysis
     if rowing_events is None:
@@ -185,4 +236,6 @@ def analyze(
         combined_increase_pct=combined_increase,
         new_sens_increase=new_sens_increase,
         new_dpi_increase=new_dpi_increase,
+        swirl_result=swirl_result,
+        movement_contamination_pct=contamination,
     )

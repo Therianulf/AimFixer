@@ -80,7 +80,13 @@ def main():
         elif state == "stopped":
             overlay.set_state(OverlayState.ANALYZING)
 
-    collector = MouseCollector(on_state_change=on_state_change)
+    def on_movement_key():
+        overlay.flash_warning("Don't move! Stand still while recording")
+
+    collector = MouseCollector(
+        on_state_change=on_state_change,
+        on_movement_key=on_movement_key,
+    )
 
     # Store pending chart data for after the overlay exits
     pending = {}
@@ -100,10 +106,13 @@ def main():
 
         session_duration = samples[-1].timestamp - samples[0].timestamp
 
+        movement_sample_count = sum(1 for s in samples if s.during_movement)
+
         detector = OvershootDetector(samples)
         events = detector.detect()
         flick_counts = detector.get_flick_counts()
         rowing_events = detector.get_rowing_events()
+        swirl_events = detector.get_swirl_events()
 
         result = analyze(
             events=events,
@@ -113,6 +122,8 @@ def main():
             current_dpi=dpi,
             current_sens=sens,
             rowing_events=rowing_events,
+            swirl_events=swirl_events,
+            movement_sample_count=movement_sample_count,
         )
 
         print_summary(result)
@@ -121,6 +132,7 @@ def main():
         pending["result"] = result
         pending["events"] = events
         pending["rowing_events"] = rowing_events
+        pending["swirl_events"] = swirl_events
         overlay.schedule(overlay.stop)
 
     # Start collector listeners + background worker thread
@@ -134,7 +146,11 @@ def main():
 
     # After overlay exits, show matplotlib charts on the main thread
     if "result" in pending:
-        show_charts(pending["result"], pending["events"], pending.get("rowing_events", []))
+        show_charts(
+            pending["result"], pending["events"],
+            pending.get("rowing_events", []),
+            pending.get("swirl_events", []),
+        )
 
 
 if __name__ == "__main__":

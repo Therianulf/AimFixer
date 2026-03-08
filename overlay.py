@@ -14,6 +14,8 @@ from AppKit import (
     NSScreen,
     NSTextField,
     NSTextAlignmentCenter,
+    NSTextAlignmentLeft,
+    NSTimer,
     NSWindow,
     NSWindowStyleMaskBorderless,
 )
@@ -22,10 +24,13 @@ from Foundation import NSObject
 from config import (
     OVERLAY_BG_ALPHA,
     OVERLAY_CORNER_RADIUS,
-    OVERLAY_HEIGHT,
+    OVERLAY_HEIGHT_WAITING,
+    OVERLAY_HEIGHT_COMPACT,
+    OVERLAY_INSTRUCTIONS_FONT_SIZE,
     OVERLAY_STATUS_FONT_SIZE,
     OVERLAY_TITLE_FONT_SIZE,
     OVERLAY_TOP_OFFSET,
+    OVERLAY_WARNING_FLASH_S,
     OVERLAY_WIDTH,
 )
 
@@ -39,6 +44,17 @@ NSWindowCollectionBehaviorFullScreenAuxiliary = 1 << 8
 TITLE_HEIGHT = 36
 STATUS_HEIGHT = 32
 
+_INSTRUCTIONS_TEXT = (
+    "\u2022 Do NOT move your character (no WASD)\n"
+    "\u2022 Use a single-shot weapon only\n"
+    "\u2022 Flick quickly between targets\n"
+    "\u2022 Only fire when 100% sure of a hit\n"
+    "\u2022 Stand still, pick targets at varying distances"
+)
+
+_DARK_BG = (0.08, 0.08, 0.08)
+_RED_BG = (0.6, 0.05, 0.05)
+
 
 class OverlayState(Enum):
     WAITING = auto()
@@ -49,23 +65,27 @@ class OverlayState(Enum):
 
 _STATE_TEXT = {
     OverlayState.WAITING: "Press F6 to start recording",
-    OverlayState.RECORDING: "🔴 Recording…  Press F6 to stop",
-    OverlayState.ANALYZING: "Recording stopped. Analyzing…",
+    OverlayState.RECORDING: "\U0001F534 Recording\u2026  Press F6 to stop",
+    OverlayState.ANALYZING: "Recording stopped. Analyzing\u2026",
 }
 
 
-def _make_label(frame, font_size, weight=0.0, color=None):
-    """Create a centered, non-editable text label."""
+def _make_label(frame, font_size, weight=0.0, color=None, alignment=NSTextAlignmentCenter):
+    """Create a non-editable text label."""
     label = NSTextField.alloc().initWithFrame_(frame)
     label.setStringValue_("")
     label.setBezeled_(False)
     label.setDrawsBackground_(False)
     label.setEditable_(False)
     label.setSelectable_(False)
-    label.setAlignment_(NSTextAlignmentCenter)
+    label.setAlignment_(alignment)
     label.setTextColor_(color or NSColor.whiteColor())
     label.setFont_(NSFont.systemFontOfSize_weight_(font_size, weight))
     return label
+
+
+def _bg_color(r, g, b):
+    return NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, OVERLAY_BG_ALPHA).CGColor()
 
 
 class OverlayController(NSObject):
@@ -79,12 +99,13 @@ class OverlayController(NSObject):
         self._app = NSApplication.sharedApplication()
         self._app.setActivationPolicy_(1)  # NSApplicationActivationPolicyAccessory
 
+        self._current_height = OVERLAY_HEIGHT_WAITING
         screen = NSScreen.mainScreen().frame()
         x = (screen.size.width - OVERLAY_WIDTH) / 2
-        y = screen.size.height - OVERLAY_TOP_OFFSET - OVERLAY_HEIGHT
+        y = screen.size.height - OVERLAY_TOP_OFFSET - self._current_height
 
         self._window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            NSMakeRect(x, y, OVERLAY_WIDTH, OVERLAY_HEIGHT),
+            NSMakeRect(x, y, OVERLAY_WIDTH, self._current_height),
             NSWindowStyleMaskBorderless,
             NSBackingStoreBuffered,
             False,
@@ -105,35 +126,67 @@ class OverlayController(NSObject):
         layer = content.layer()
         layer.setCornerRadius_(OVERLAY_CORNER_RADIUS)
         layer.setMasksToBounds_(True)
-        layer.setBackgroundColor_(
-            NSColor.colorWithCalibratedRed_green_blue_alpha_(
-                0.08, 0.08, 0.08, OVERLAY_BG_ALPHA
-            ).CGColor()
-        )
+        layer.setBackgroundColor_(_bg_color(*_DARK_BG))
 
         # Green color for text
         green = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.3, 0.9, 0.4, 1.0)
+        gray = NSColor.colorWithCalibratedRed_green_blue_alpha_(0.7, 0.7, 0.7, 1.0)
 
-        # Title label (top half): "🎯 AimFixer"
+        # Title label: "🎯 AimFixer"
         self._title = _make_label(
-            NSMakeRect(0, STATUS_HEIGHT - 4, OVERLAY_WIDTH, TITLE_HEIGHT),
+            NSMakeRect(0, self._current_height - TITLE_HEIGHT - 4, OVERLAY_WIDTH, TITLE_HEIGHT),
             OVERLAY_TITLE_FONT_SIZE,
-            weight=0.5,  # semibold
+            weight=0.5,
             color=green,
         )
         self._title.setStringValue_("\U0001F3AF AimFixer")
         content.addSubview_(self._title)
 
-        # Status label (bottom half): state-dependent text
+        # Status label: state-dependent text
         self._status = _make_label(
-            NSMakeRect(0, 4, OVERLAY_WIDTH, STATUS_HEIGHT),
+            NSMakeRect(0, self._current_height - TITLE_HEIGHT - STATUS_HEIGHT, OVERLAY_WIDTH, STATUS_HEIGHT),
             OVERLAY_STATUS_FONT_SIZE,
             color=green,
         )
         content.addSubview_(self._status)
 
+        # Instructions label (visible only in WAITING state)
+        instructions_top = self._current_height - TITLE_HEIGHT - STATUS_HEIGHT - 8
+        self._instructions = _make_label(
+            NSMakeRect(20, 8, OVERLAY_WIDTH - 40, instructions_top - 8),
+            OVERLAY_INSTRUCTIONS_FONT_SIZE,
+            color=gray,
+            alignment=NSTextAlignmentLeft,
+        )
+        self._instructions.setMaximumNumberOfLines_(0)
+        self._instructions.setStringValue_(_INSTRUCTIONS_TEXT)
+        content.addSubview_(self._instructions)
+
         self._pending_state = OverlayState.HIDDEN
+        self._warning_timer = None
+        self._green = green
         return self
+
+    @objc.python_method
+    def _resize_window(self, new_height):
+        """Resize keeping top edge anchored."""
+        if new_height == self._current_height:
+            return
+        screen = NSScreen.mainScreen().frame()
+        frame = self._window.frame()
+        new_y = screen.size.height - OVERLAY_TOP_OFFSET - new_height
+        self._window.setFrame_display_animate_(
+            NSMakeRect(frame.origin.x, new_y, OVERLAY_WIDTH, new_height),
+            True, True,
+        )
+        self._current_height = new_height
+        # Reposition labels relative to new height
+        self._title.setFrame_(
+            NSMakeRect(0, new_height - TITLE_HEIGHT - 4, OVERLAY_WIDTH, TITLE_HEIGHT)
+        )
+        self._status.setFrame_(
+            NSMakeRect(0, new_height - TITLE_HEIGHT - STATUS_HEIGHT, OVERLAY_WIDTH, STATUS_HEIGHT)
+        )
 
     @objc.python_method
     def set_state(self, state: OverlayState):
@@ -150,9 +203,63 @@ class OverlayController(NSObject):
             self._window.orderOut_(None)
             return
 
+        if state == OverlayState.WAITING:
+            self._resize_window(OVERLAY_HEIGHT_WAITING)
+            self._instructions.setHidden_(False)
+        else:
+            self._resize_window(OVERLAY_HEIGHT_COMPACT)
+            self._instructions.setHidden_(True)
+
+        # Restore normal background (in case a warning was active)
+        self._window.contentView().layer().setBackgroundColor_(_bg_color(*_DARK_BG))
+        self._status.setTextColor_(self._green)
+
         text = _STATE_TEXT.get(state, "")
         self._status.setStringValue_(text)
         self._window.orderFrontRegardless()
+
+    @objc.python_method
+    def flash_warning(self, message: str):
+        """Thread-safe: trigger a red flash with warning text."""
+        self._pending_warning = message
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "applyWarning", None, False
+        )
+
+    def applyWarning(self):
+        """Called on main thread to show warning flash."""
+        message = getattr(self, '_pending_warning', None)
+        if not message:
+            return
+
+        # Change background to red
+        self._window.contentView().layer().setBackgroundColor_(_bg_color(*_RED_BG))
+
+        # Change status text to warning
+        self._status.setStringValue_(message)
+        self._status.setTextColor_(NSColor.whiteColor())
+
+        # Cancel any existing revert timer
+        if self._warning_timer:
+            self._warning_timer.invalidate()
+
+        self._warning_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            OVERLAY_WARNING_FLASH_S,
+            self,
+            "revertWarning",
+            None,
+            False,
+        )
+
+    def revertWarning(self):
+        """Called by NSTimer to revert the warning flash."""
+        self._warning_timer = None
+        # Only revert if we're still in RECORDING state
+        if self._pending_state != OverlayState.RECORDING:
+            return
+        self._window.contentView().layer().setBackgroundColor_(_bg_color(*_DARK_BG))
+        self._status.setTextColor_(self._green)
+        self._status.setStringValue_(_STATE_TEXT[OverlayState.RECORDING])
 
     def run(self):
         """Start the NSApp run loop. Blocks until stop() is called."""
