@@ -37,8 +37,8 @@ MIN_ROWING_EVENTS_FOR_RECOMMENDATION = 8
 CLICK_WINDOW_BEFORE_S = 0.500       # Look 500ms before click for the flick
 CLICK_WINDOW_AFTER_S = 0.300        # Look 300ms after click for correction jitter
 
-# Swirl detection (2D overshoot) — lower angle requirement
-MIN_SWIRL_ANGLE_RAD = 0.524          # ~30° minimum correction arc rotation
+# Swirl detection (2D overshoot) — net rotation, not accumulated jitter
+MIN_SWIRL_ANGLE_RAD = 1.5708         # ~90° net rotation = true spiral around target
 
 # Click-centric velocity threshold for approach/correction transition
 CLICK_APPROACH_VELOCITY_DROP = 0.30  # Correction starts when velocity drops to 30% of peak

@@ -268,7 +268,7 @@ class OvershootDetector:
             # --- Correction: transition to click (NO post-click data) ---
             correction_mag = 0.0
             dir_changes = 0
-            angle_rotation = 0.0
+            net_angle_rotation = 0.0
             prev_angle = None
 
             for i in range(transition_index, i_click):
@@ -284,10 +284,12 @@ class OvershootDetector:
                             math.sin(angle - prev_angle),
                             math.cos(angle - prev_angle),
                         )
-                        angle_rotation += abs(delta)
+                        net_angle_rotation += delta  # signed: detects true spiral
                         if abs(delta) > math.pi / 3:  # >60° = direction change
                             dir_changes += 1
                     prev_angle = angle
+
+            angle_rotation = abs(net_angle_rotation)
 
             correction_duration = (
                 timestamps[i_click - 1] - timestamps[transition_index]
