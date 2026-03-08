@@ -52,6 +52,12 @@ OVERLAY_WARNING_FLASH_S = 2.0
 # DPI snapping
 DPI_STEP = 50
 
+# DPI advisory ranges
+DPI_SWEET_SPOT_LOW = 800
+DPI_SWEET_SPOT_HIGH = 1600
+DPI_HARD_LOW = 400       # Below this: strong warning (pixel skipping)
+DPI_HARD_HIGH = 3200     # Above this: strong warning (sensor smoothing)
+
 # Overlay appearance
 OVERLAY_WIDTH = 360
 OVERLAY_HEIGHT_WAITING = 220

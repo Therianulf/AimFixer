@@ -6,6 +6,7 @@ from config import (
     CORRECTION_FACTOR, MAX_REDUCTION_PCT, MIN_EVENTS_FOR_RECOMMENDATION,
     X_WEIGHT, Y_WEIGHT, DPI_STEP,
     ROWING_CORRECTION_FACTOR, MIN_ROWING_EVENTS_FOR_RECOMMENDATION,
+    DPI_SWEET_SPOT_LOW, DPI_SWEET_SPOT_HIGH, DPI_HARD_LOW, DPI_HARD_HIGH,
 )
 
 
@@ -65,6 +66,10 @@ class AnalysisResult:
     fire_rate: FireRateResult | None = None
     # Contamination
     movement_contamination_pct: float = 0.0
+    # DPI advisory
+    dpi_advisory: str | None = None
+    suggested_dpi: int | None = None
+    dpi_advisory_level: str = "none"
 
 
 def _confidence_weight(n_events: int) -> float:
@@ -73,6 +78,41 @@ def _confidence_weight(n_events: int) -> float:
 
 def _snap_dpi(dpi: float) -> int:
     return max(DPI_STEP, round(dpi / DPI_STEP) * DPI_STEP)
+
+
+def _compute_dpi_advisory(current_dpi: int) -> tuple[str | None, int | None, str]:
+    if current_dpi < DPI_HARD_LOW:
+        return (
+            f"Your DPI ({current_dpi}) is very low. Pixel skipping is likely."
+            f" Strongly consider raising to {DPI_SWEET_SPOT_LOW}.",
+            _snap_dpi(DPI_SWEET_SPOT_LOW),
+            "warning",
+        )
+    elif current_dpi < DPI_SWEET_SPOT_LOW:
+        return (
+            f"Your DPI ({current_dpi}) is a bit low."
+            f" Consider raising to {DPI_SWEET_SPOT_LOW} for smoother tracking.",
+            _snap_dpi(DPI_SWEET_SPOT_LOW),
+            "info",
+        )
+    elif current_dpi > DPI_HARD_HIGH:
+        return (
+            f"Your DPI ({current_dpi}) is very high."
+            f" Sensor smoothing may reduce precision."
+            f" Consider lowering to {DPI_SWEET_SPOT_HIGH}.",
+            _snap_dpi(DPI_SWEET_SPOT_HIGH),
+            "warning",
+        )
+    elif current_dpi > DPI_SWEET_SPOT_HIGH:
+        return (
+            f"Your DPI ({current_dpi}) is above the ideal"
+            f" {DPI_SWEET_SPOT_LOW}-{DPI_SWEET_SPOT_HIGH} range."
+            f" This is usually fine on modern sensors,"
+            f" but consider lowering to {DPI_SWEET_SPOT_HIGH}.",
+            _snap_dpi(DPI_SWEET_SPOT_HIGH),
+            "info",
+        )
+    return None, None, "none"
 
 
 def _compute_click_analysis(
@@ -224,6 +264,9 @@ def analyze(
             click_times, session_duration, click_analysis.median_overshoot_pct,
         )
 
+    # DPI advisory
+    dpi_advisory, suggested_dpi, dpi_level = _compute_dpi_advisory(current_dpi)
+
     return AnalysisResult(
         session_duration=session_duration,
         total_samples=total_samples,
@@ -241,4 +284,7 @@ def analyze(
         new_sens_increase=new_sens_increase,
         new_dpi_increase=new_dpi_increase,
         movement_contamination_pct=contamination,
+        dpi_advisory=dpi_advisory,
+        suggested_dpi=suggested_dpi,
+        dpi_advisory_level=dpi_level,
     )
