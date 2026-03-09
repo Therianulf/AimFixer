@@ -78,6 +78,9 @@ def save_session(
             "mean_shot_interval_ms": round(fr.mean_shot_interval_ms, 1),
             "aim_efficiency": round(fr.aim_efficiency, 3),
             "hit_factor": round(fr.hit_factor, 3),
+            "string_count": fr.string_count,
+            "active_combat_duration_s": round(fr.active_combat_duration_s, 1),
+            "shots_per_string_avg": round(fr.shots_per_string_avg, 1),
         }
 
     summary_path = sessions / f"{prefix}_summary.json"

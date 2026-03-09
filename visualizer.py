@@ -1,7 +1,12 @@
 from __future__ import annotations
+import matplotlib
+matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
-from analyzer import AnalysisResult
-from config import MIN_EVENTS_FOR_RECOMMENDATION
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.figure import Figure
+import tkinter as tk
+from analyzer import AnalysisResult, group_shot_strings
+from config import MIN_EVENTS_FOR_RECOMMENDATION, STRING_GAP_THRESHOLD_S
 
 
 def print_summary(result: AnalysisResult, previous_session: dict | None = None):
@@ -32,7 +37,11 @@ def print_summary(result: AnalysisResult, previous_session: dict | None = None):
     if result.fire_rate:
         fr = result.fire_rate
         interval_str = f"{fr.median_shot_interval_ms:.0f}ms between shots"
+        active_s = int(fr.active_combat_duration_s)
+        session_s = int(result.session_duration)
         print()
+        print(f"  Shot strings:        {fr.string_count} strings (avg {fr.shots_per_string_avg:.0f} shots/string)")
+        print(f"  Active combat:       {active_s}s of {session_s}s session")
         print(f"  Fire rate:           {fr.shots_per_minute:.0f} shots/min ({interval_str})")
         print(f"  Aim efficiency:      {fr.aim_efficiency:.2f}")
         print(f"  Hit factor:          {fr.hit_factor:.2f}")
@@ -178,13 +187,27 @@ def _print_rowing(result: AnalysisResult):
               f"avg gap: {y_r.mean_gap_duration_ms:.0f}ms")
 
 
+def _get_intra_string_intervals(click_aim_events) -> list[float]:
+    """Compute intra-string intervals (ms) from click aim events, excluding reload gaps."""
+    if len(click_aim_events) < 2:
+        return []
+    sorted_clicks = sorted(e.click_time for e in click_aim_events)
+    strings = group_shot_strings(sorted_clicks)
+    intervals_ms: list[float] = []
+    for s in strings:
+        for i in range(1, len(s)):
+            intervals_ms.append((s[i] - s[i - 1]) * 1000)
+    return intervals_ms
+
+
 def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
     if rowing_events is None:
         rowing_events = []
 
     ca = result.click_analysis
 
-    fig, axes = plt.subplots(3, 2, figsize=(12, 14))
+    fig = Figure(figsize=(12, 14))
+    axes = fig.subplots(3, 2)
     fig.suptitle("AimFixer Analysis", fontsize=14, fontweight="bold")
 
     # Panel 1: Click overshoot % histogram
@@ -267,41 +290,90 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
         ax.set_xlabel("Time (seconds)")
         ax.set_ylabel("Increase ratio (total/max)")
     elif click_aim_events:
-        # Panel 5: Shot interval histogram
+        # Use intra-string intervals only (filter out reload gaps)
+        intra_intervals = _get_intra_string_intervals(click_aim_events)
+
+        # Panel 5: Shot interval histogram (intra-string only)
         ax = axes[2][0]
-        if len(click_aim_events) >= 2:
-            sorted_clicks = sorted(e.click_time for e in click_aim_events)
-            intervals = [
-                (sorted_clicks[i] - sorted_clicks[i - 1]) * 1000
-                for i in range(1, len(sorted_clicks))
-            ]
-            ax.hist(intervals, bins=20, color="#27ae60", edgecolor="white", alpha=0.85)
+        if intra_intervals:
+            ax.hist(intra_intervals, bins=20, color="#27ae60", edgecolor="white", alpha=0.85)
             from statistics import median as _median
-            med_interval = _median(intervals)
+            med_interval = _median(intra_intervals)
             ax.axvline(med_interval, color="red", linestyle="--",
                        label=f"Median: {med_interval:.0f}ms")
             ax.legend()
-        ax.set_title("Shot Interval Distribution")
+        ax.set_title("Shot Interval Distribution (in-string)")
         ax.set_xlabel("Interval (ms)")
         ax.set_ylabel("Count")
 
-        # Panel 6: Shot intervals over time
+        # Panel 6: Shot intervals over time (intra-string only)
         ax = axes[2][1]
-        if len(click_aim_events) >= 2:
+        if intra_intervals:
             sorted_clicks = sorted(e.click_time for e in click_aim_events)
+            strings = group_shot_strings(sorted_clicks)
             t0 = sorted_clicks[0]
-            shot_times = [(sorted_clicks[i] - t0) for i in range(1, len(sorted_clicks))]
-            intervals = [
-                (sorted_clicks[i] - sorted_clicks[i - 1]) * 1000
-                for i in range(1, len(sorted_clicks))
-            ]
-            ax.scatter(shot_times, intervals, c="#27ae60", alpha=0.6, s=30)
-        ax.set_title("Shot Intervals Over Time")
+            shot_times: list[float] = []
+            interval_vals: list[float] = []
+            for s in strings:
+                for i in range(1, len(s)):
+                    shot_times.append(s[i] - t0)
+                    interval_vals.append((s[i] - s[i - 1]) * 1000)
+            ax.scatter(shot_times, interval_vals, c="#27ae60", alpha=0.6, s=30)
+        ax.set_title("Shot Intervals Over Time (in-string)")
         ax.set_xlabel("Time (seconds)")
         ax.set_ylabel("Interval (ms)")
     else:
         axes[2][0].set_visible(False)
         axes[2][1].set_visible(False)
 
-    plt.tight_layout()
-    plt.show()
+    fig.tight_layout()
+
+    # Build scrollable Tkinter window
+    root = tk.Tk()
+    root.title("AimFixer Analysis")
+
+    # Size window to near-fullscreen
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    win_h = screen_h - 80  # leave room for menubar/dock
+    root.geometry(f"{screen_w}x{win_h}+0+0")
+
+    # Outer frame with canvas + scrollbar
+    outer = tk.Frame(root)
+    outer.pack(fill=tk.BOTH, expand=True)
+
+    canvas = tk.Canvas(outer)
+    scrollbar = tk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    # Inner frame for the figure
+    inner = tk.Frame(canvas)
+    canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    # Embed matplotlib figure
+    fig_canvas = FigureCanvasTkAgg(fig, master=inner)
+    fig_canvas.draw()
+    fig_widget = fig_canvas.get_tk_widget()
+    fig_widget.pack(fill=tk.BOTH, expand=True)
+
+    # Navigation toolbar for zoom/pan/save
+    toolbar = NavigationToolbar2Tk(fig_canvas, inner)
+    toolbar.update()
+    toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def _on_configure(event):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    inner.bind("<Configure>", _on_configure)
+
+    # Mousewheel scrolling (macOS uses MouseWheel with delta)
+    def _on_mousewheel(event):
+        # macOS sends event.delta in units of 120 (or raw pixels on trackpad)
+        canvas.yview_scroll(int(-event.delta), "units")
+
+    canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+    root.mainloop()

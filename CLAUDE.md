@@ -65,3 +65,9 @@ Visualizer → Text summary + charts (histograms, scatter, time series)
 - The F6 hotkey is defined via `TOGGLE_KEY` in config.py
 - DPI recommendations snap to nearest 50 (`DPI_STEP`)
 - Confidence weighting scales down recommendations when sample count is low
+
+## Code Navigation Preferences
+
+- **Prefer LSP tools first** for navigating and understanding code (goToDefinition, findReferences, documentSymbol, hover, etc.). LSP provides accurate, type-aware results.
+- **Fall back to Grep/Glob** if the LSP server is unavailable, still starting, or returns an error.
+- Navigation priority: LSP → Grep → Glob → Agent (Explore)

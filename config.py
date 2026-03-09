@@ -51,6 +51,9 @@ MOVEMENT_KEYS_CHAR = {'w', 'a', 's', 'd'}
 MOVEMENT_DEBOUNCE_S = 0.5
 OVERLAY_WARNING_FLASH_S = 2.0
 
+# Shot string segmentation
+STRING_GAP_THRESHOLD_S = 2.0  # Max gap between shots in a combat string
+
 # DPI snapping
 DPI_STEP = 50
 

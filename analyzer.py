@@ -7,6 +7,7 @@ from config import (
     X_WEIGHT, Y_WEIGHT, DPI_STEP,
     ROWING_CORRECTION_FACTOR, MIN_ROWING_EVENTS_FOR_RECOMMENDATION,
     DPI_SWEET_SPOT_LOW, DPI_SWEET_SPOT_HIGH, DPI_HARD_LOW, DPI_HARD_HIGH,
+    STRING_GAP_THRESHOLD_S,
 )
 
 
@@ -33,6 +34,9 @@ class FireRateResult:
     mean_shot_interval_ms: float
     aim_efficiency: float          # 0-1, higher = less overshoot
     hit_factor: float              # (shots_per_minute / 60) * aim_efficiency
+    string_count: int = 0
+    active_combat_duration_s: float = 0.0
+    shots_per_string_avg: float = 0.0
 
 
 @dataclass
@@ -212,6 +216,22 @@ def _compute_rowing_axis(events: list[RowingEvent]) -> RowingAxisResult | None:
     )
 
 
+def group_shot_strings(
+    sorted_times: list[float],
+    gap_threshold: float = STRING_GAP_THRESHOLD_S,
+) -> list[list[float]]:
+    """Group consecutive shots into 'strings' separated by gaps >= threshold."""
+    if not sorted_times:
+        return []
+    strings: list[list[float]] = [[sorted_times[0]]]
+    for i in range(1, len(sorted_times)):
+        if sorted_times[i] - sorted_times[i - 1] >= gap_threshold:
+            strings.append([sorted_times[i]])
+        else:
+            strings[-1].append(sorted_times[i])
+    return strings
+
+
 def _compute_fire_rate(
     click_times: list[float],
     session_duration: float,
@@ -221,23 +241,55 @@ def _compute_fire_rate(
         return None
 
     sorted_times = sorted(click_times)
-    intervals = [
-        (sorted_times[i] - sorted_times[i - 1]) * 1000  # ms
-        for i in range(1, len(sorted_times))
-    ]
-
     total_shots = len(sorted_times)
-    shots_per_minute = total_shots / session_duration * 60.0
+
+    # Segment into shot strings
+    strings = group_shot_strings(sorted_times)
+    string_count = len(strings)
+    shots_per_string_avg = total_shots / string_count if string_count else 0.0
+
+    # Active combat duration = sum of each string's span (for strings with 2+ shots)
+    active_combat_duration_s = sum(
+        s[-1] - s[0] for s in strings if len(s) >= 2
+    )
+
+    # Intra-string intervals only (skip cross-string gaps)
+    intra_intervals_ms: list[float] = []
+    for s in strings:
+        for i in range(1, len(s)):
+            intra_intervals_ms.append((s[i] - s[i - 1]) * 1000)
+
+    # Fire rate from active combat time; fall back to session_duration
+    if active_combat_duration_s > 0:
+        shots_per_minute = total_shots / active_combat_duration_s * 60.0
+    else:
+        shots_per_minute = total_shots / session_duration * 60.0
+
     aim_efficiency = max(0.0, min(1.0, 1.0 - median_overshoot_pct / 200.0))
     hit_factor = (shots_per_minute / 60.0) * aim_efficiency
+
+    # Use intra-string intervals for stats; fall back to all intervals
+    if intra_intervals_ms:
+        med_interval = median(intra_intervals_ms)
+        mean_interval = mean(intra_intervals_ms)
+    else:
+        all_intervals = [
+            (sorted_times[i] - sorted_times[i - 1]) * 1000
+            for i in range(1, len(sorted_times))
+        ]
+        med_interval = median(all_intervals)
+        mean_interval = mean(all_intervals)
 
     return FireRateResult(
         total_shots=total_shots,
         shots_per_minute=shots_per_minute,
-        median_shot_interval_ms=median(intervals),
-        mean_shot_interval_ms=mean(intervals),
+        median_shot_interval_ms=med_interval,
+        mean_shot_interval_ms=mean_interval,
         aim_efficiency=aim_efficiency,
         hit_factor=hit_factor,
+        string_count=string_count,
+        active_combat_duration_s=active_combat_duration_s,
+        shots_per_string_avg=shots_per_string_avg,
     )
 
 
