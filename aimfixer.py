@@ -62,26 +62,30 @@ def main():
         run_history_comparison()
         return
 
-    # Accept optional CLI args: aimfixer.py <dpi> <sensitivity>
-    if len(sys.argv) == 3:
+    # Accept optional CLI args: aimfixer.py <dpi> <sensitivity> [v_sensitivity]
+    if len(sys.argv) in (3, 4):
         try:
             dpi = int(sys.argv[1])
             sens = float(sys.argv[2])
+            v_sens = float(sys.argv[3]) if len(sys.argv) == 4 else sens
             if dpi < 50 or dpi > 25600:
                 print("  DPI must be between 50 and 25600.")
                 return
-            if sens <= 0:
+            if sens <= 0 or v_sens <= 0:
                 print("  Sensitivity must be positive.")
                 return
         except ValueError:
-            print("  Usage: aimfixer.py <dpi> <sensitivity>")
+            print("  Usage: aimfixer.py <dpi> <sensitivity> [v_sensitivity]")
             return
     else:
-        dpi, sens = get_user_settings()
+        dpi, sens, v_sens = get_user_settings()
 
     from config import GAME_DISPLAY_NAMES, GAME_LIST
     print()
-    print(f"  Settings: {dpi} DPI / {sens} in-game sensitivity")
+    if v_sens != sens:
+        print(f"  Settings: {dpi} DPI / H:{sens} V:{v_sens} in-game sensitivity")
+    else:
+        print(f"  Settings: {dpi} DPI / {sens} in-game sensitivity")
     print(f"  Game: {GAME_DISPLAY_NAMES[GAME_LIST[0]]}")
     print()
 
@@ -159,6 +163,7 @@ def main():
             click_times=click_times,
             previous_session=previous_session,
             current_game=current_game,
+            current_v_sens=v_sens,
         )
 
         # Save current session AFTER analyze

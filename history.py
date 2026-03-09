@@ -42,6 +42,7 @@ def save_session(
         "settings": {
             "dpi": result.current_dpi,
             "sensitivity": result.current_sens,
+            "v_sensitivity": result.current_v_sens,
             "game": game,
         },
         "click_analysis": {
@@ -64,6 +65,7 @@ def save_session(
         "recommendations": {
             "reduction_pct": round(result.combined_reduction_pct, 1),
             "new_sens": round(result.new_sens_combined, 2),
+            "new_v_sens": round(result.new_v_sens_combined, 2),
             "new_dpi": result.new_dpi_combined,
             "increase_pct": round(result.combined_increase_pct, 1),
             "dpi_advisory": result.dpi_advisory,

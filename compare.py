@@ -54,13 +54,15 @@ def _load_and_filter_sessions() -> tuple[list[dict], int]:
     return filtered, dropped
 
 
-def _group_by_settings(sessions: list[dict]) -> dict[tuple[str, int, float], list[dict]]:
-    """Group sessions by (game, dpi, sensitivity) tuple."""
-    groups: dict[tuple[str, int, float], list[dict]] = {}
+def _group_by_settings(sessions: list[dict]) -> dict[tuple[str, int, float, float], list[dict]]:
+    """Group sessions by (game, dpi, sensitivity, v_sensitivity) tuple."""
+    groups: dict[tuple[str, int, float, float], list[dict]] = {}
     for s in sessions:
         settings = s.get("settings", {})
         game = settings.get("game", "unknown")
-        key = (game, settings.get("dpi", 0), settings.get("sensitivity", 0.0))
+        sens = settings.get("sensitivity", 0.0)
+        v_sens = settings.get("v_sensitivity", sens)
+        key = (game, settings.get("dpi", 0), sens, v_sens)
         groups.setdefault(key, []).append(s)
     return groups
 
@@ -145,8 +147,12 @@ def _compute_aggregate_recommendation(
     stats: AggregateStats,
     dpi: int,
     sens: float,
+    v_sens: float = 0.0,
 ) -> dict:
     """Compute recommendation from aggregate stats. No trend dampening."""
+    if v_sens == 0.0:
+        v_sens = sens
+
     overshoot = stats.weighted_median_overshoot_pct
     total_clicks = stats.total_analyzed_clicks
 
@@ -161,19 +167,23 @@ def _compute_aggregate_recommendation(
     if has_overshoot and rowing_significant:
         # Mixed signal — recommend reduce (overshoot usually more actionable)
         new_sens = sens * (1 - raw_reduction / 100.0)
+        new_v_sens = v_sens * (1 - raw_reduction / 100.0)
         return {
             "action": "mixed",
             "reduction_pct": raw_reduction,
             "new_sens": new_sens,
+            "new_v_sens": new_v_sens,
             "new_dpi": _snap_dpi(dpi * (1 - raw_reduction / 100.0)),
             "note": "Both overshoot and rowing detected across sessions.",
         }
     elif has_overshoot:
         new_sens = sens * (1 - raw_reduction / 100.0)
+        new_v_sens = v_sens * (1 - raw_reduction / 100.0)
         return {
             "action": "reduce",
             "reduction_pct": raw_reduction,
             "new_sens": new_sens,
+            "new_v_sens": new_v_sens,
             "new_dpi": _snap_dpi(dpi * (1 - raw_reduction / 100.0)),
             "note": "",
         }
@@ -182,6 +192,7 @@ def _compute_aggregate_recommendation(
             "action": "increase",
             "reduction_pct": 0.0,
             "new_sens": sens,
+            "new_v_sens": v_sens,
             "new_dpi": dpi,
             "note": "Rowing detected — sensitivity may be too low.",
         }
@@ -190,17 +201,25 @@ def _compute_aggregate_recommendation(
             "action": "keep",
             "reduction_pct": 0.0,
             "new_sens": sens,
+            "new_v_sens": v_sens,
             "new_dpi": dpi,
             "note": "Your settings look well-tuned across sessions.",
         }
 
 
+def _format_sens_str(sens: float, v_sens: float) -> str:
+    """Format sensitivity as single value or H:x V:y when they differ."""
+    if v_sens != sens:
+        return f"H:{sens} V:{v_sens} sens"
+    return f"{sens} sens"
+
+
 def _print_history_report(
     filtered: list[dict],
     dropped_count: int,
-    groups: dict[tuple[str, int, float], list[dict]],
-    aggregates: dict[tuple[str, int, float], AggregateStats],
-    most_recent_key: tuple[str, int, float],
+    groups: dict[tuple[str, int, float, float], list[dict]],
+    aggregates: dict[tuple[str, int, float, float], AggregateStats],
+    most_recent_key: tuple[str, int, float, float],
 ):
     total_loaded = len(filtered) + dropped_count
     print()
@@ -213,11 +232,12 @@ def _print_history_report(
     print()
 
     for key, sessions in groups.items():
-        game, dpi, sens = key
+        game, dpi, sens, v_sens = key
         game_display = GAME_DISPLAY_NAMES.get(game, game.replace("_", " ").title())
+        sens_str = _format_sens_str(sens, v_sens)
         stats = aggregates[key]
         print("-" * 50)
-        print(f"  {game_display} @ {dpi} DPI / {sens} sens  ({stats.session_count} sessions, {stats.total_analyzed_clicks} clicks)")
+        print(f"  {game_display} @ {dpi} DPI / {sens_str}  ({stats.session_count} sessions, {stats.total_analyzed_clicks} clicks)")
         print("-" * 50)
         print(f"  Median overshoot:      {stats.weighted_median_overshoot_pct:.1f}%")
         print(f"  Median correction:     {stats.weighted_median_correction_mag:.1f}px over {stats.weighted_median_correction_dur_ms:.0f}ms")
@@ -244,24 +264,33 @@ def _print_history_report(
         print()
 
     # Recommendation for most recent group
-    game, dpi, sens = most_recent_key
+    game, dpi, sens, v_sens = most_recent_key
     game_display = GAME_DISPLAY_NAMES.get(game, game.replace("_", " ").title())
+    sens_str = _format_sens_str(sens, v_sens)
     stats = aggregates[most_recent_key]
-    rec = _compute_aggregate_recommendation(stats, dpi, sens)
+    rec = _compute_aggregate_recommendation(stats, dpi, sens, v_sens)
 
     print("-" * 50)
-    print(f"  RECOMMENDATION ({game_display} @ {dpi} DPI / {sens} sens)")
+    print(f"  RECOMMENDATION ({game_display} @ {dpi} DPI / {sens_str})")
     print("-" * 50)
     print(f"  Based on {stats.total_analyzed_clicks} clicks across {stats.session_count} sessions:")
 
     if rec["action"] == "reduce":
         print(f"  Reduce in-game sensitivity by ~{rec['reduction_pct']:.0f}%")
-        print(f"    {sens} -> {rec['new_sens']:.2f}")
+        if v_sens != sens:
+            print(f"    H: {sens} -> {rec['new_sens']:.2f}")
+            print(f"    V: {v_sens} -> {rec['new_v_sens']:.2f}")
+        else:
+            print(f"    {sens} -> {rec['new_sens']:.2f}")
     elif rec["action"] == "increase":
         print(f"  {rec['note']}")
     elif rec["action"] == "mixed":
         print(f"  Reduce in-game sensitivity by ~{rec['reduction_pct']:.0f}%")
-        print(f"    {sens} -> {rec['new_sens']:.2f}")
+        if v_sens != sens:
+            print(f"    H: {sens} -> {rec['new_sens']:.2f}")
+            print(f"    V: {v_sens} -> {rec['new_v_sens']:.2f}")
+        else:
+            print(f"    {sens} -> {rec['new_sens']:.2f}")
         print(f"  Note: {rec['note']}")
     elif rec["action"] == "keep":
         print(f"  {rec['note']}")
@@ -270,8 +299,8 @@ def _print_history_report(
 
 
 def _show_history_charts(
-    groups: dict[tuple[str, int, float], list[dict]],
-    aggregates: dict[tuple[str, int, float], AggregateStats],
+    groups: dict[tuple[str, int, float, float], list[dict]],
+    aggregates: dict[tuple[str, int, float, float], AggregateStats],
 ):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     fig.suptitle("AimFixer Session History", fontsize=14, fontweight="bold")
@@ -282,11 +311,12 @@ def _show_history_charts(
 
     session_idx = 0
     for gi, key in enumerate(group_keys):
-        game, dpi, sens = key
+        game, dpi, sens, v_sens = key
         game_display = GAME_DISPLAY_NAMES.get(game, game.replace("_", " ").title())
         stats = aggregates[key]
         color = colors[gi % len(colors)]
-        label = f"{game_display} @ {dpi} DPI / {sens}"
+        sens_label = _format_sens_str(sens, v_sens)
+        label = f"{game_display} @ {dpi} DPI / {sens_label}"
         n = stats.session_count
 
         xs = list(range(session_idx, session_idx + n))
@@ -336,7 +366,7 @@ def run_history_comparison():
     aggregates = {key: _compute_aggregate(sessions) for key, sessions in groups.items()}
 
     # Find the group containing the most recent session
-    most_recent_key = None
+    most_recent_key: tuple[str, int, float, float] | None = None
     most_recent_ts = ""
     for key, sessions in groups.items():
         for s in sessions:
@@ -344,6 +374,9 @@ def run_history_comparison():
             if ts > most_recent_ts:
                 most_recent_ts = ts
                 most_recent_key = key
+
+    if most_recent_key is None:
+        return
 
     _print_history_report(filtered, dropped_count, groups, aggregates, most_recent_key)
     _show_history_charts(groups, aggregates)
