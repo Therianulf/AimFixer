@@ -24,6 +24,26 @@ WARP_THRESHOLD_PX = 100
 # Hotkeys
 START_KEY = keyboard.Key.f5
 STOP_KEY = keyboard.Key.f6
+GAME_CYCLE_KEY = keyboard.Key.f7
+
+# Game tagging
+GAME_LIST = ["apex_legends", "r6_siege", "rust", "arc_raiders", "deadlock"]
+
+# Per-game split horizontal/vertical sensitivity (informational — doesn't gate the feature)
+GAME_SPLIT_SENS = {
+    "apex_legends": False,
+    "r6_siege": True,
+    "rust": False,
+    "arc_raiders": False,
+    "deadlock": False,
+}
+GAME_DISPLAY_NAMES = {
+    "apex_legends": "Apex Legends",
+    "r6_siege": "R6 Siege",
+    "rust": "Rust",
+    "arc_raiders": "Arc Raiders",
+    "deadlock": "Deadlock",
+}
 
 # Rowing detection
 MIN_ROWING_GAP_S = 0.050           # Min gap to count as mouse lift (50ms = realistic lift minimum)

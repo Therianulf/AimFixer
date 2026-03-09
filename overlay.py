@@ -51,7 +51,9 @@ _INSTRUCTIONS_TEXT = (
     "\u2022 Use a single-shot weapon\n"
     "\u2022 Flick quickly between targets\n"
     "\u2022 Only fire when you're on target\n"
-    "\u2022 Pick targets at varying distances"
+    "\u2022 Pick targets at varying distances\n"
+    "\n"
+    "\u2022 F7: Change game"
 )
 
 _DARK_BG = (0.08, 0.08, 0.08)
@@ -70,6 +72,8 @@ _STATE_TEXT = {
     OverlayState.RECORDING: "\U0001F534 Recording\u2026  Press F6 to stop",
     OverlayState.ANALYZING: "Recording stopped. Analyzing\u2026",
 }
+
+_DEFAULT_WAITING_FMT = "{game}  |  Press F5 to start"
 
 
 def _make_label(frame, font_size, weight=0.0, color=None, alignment=NSTextAlignmentCenter):
@@ -167,6 +171,7 @@ class OverlayController(NSObject):
         self._pending_state = OverlayState.HIDDEN
         self._warning_timer = None
         self._green = green
+        self._current_game_display = "Apex Legends"
         return self
 
     @objc.python_method
@@ -216,9 +221,26 @@ class OverlayController(NSObject):
         self._window.contentView().layer().setBackgroundColor_(_bg_color(*_DARK_BG))
         self._status.setTextColor_(self._green)
 
-        text = _STATE_TEXT.get(state, "")
+        if state == OverlayState.WAITING:
+            text = _DEFAULT_WAITING_FMT.format(game=self._current_game_display)
+        else:
+            text = _STATE_TEXT.get(state, "")
         self._status.setStringValue_(text)
         self._window.orderFrontRegardless()
+
+    @objc.python_method
+    def set_game(self, name: str):
+        """Thread-safe: update the displayed game name while in WAITING state."""
+        self._current_game_display = name
+        if self._pending_state == OverlayState.WAITING:
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "applyGame", None, False
+            )
+
+    def applyGame(self):
+        """Called on main thread to update game name in status text."""
+        text = _DEFAULT_WAITING_FMT.format(game=self._current_game_display)
+        self._status.setStringValue_(text)
 
     @objc.python_method
     def flash_warning(self, message: str):

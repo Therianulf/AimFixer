@@ -65,11 +65,13 @@ class UnifiedRecommendation:
     new_sens: float = 0.0
     new_dpi: int = 0
     reasoning: str = ""
+    new_v_sens: float = 0.0
     # Multi-step fields
     step2_action: str = ""
     step2_pct: float = 0.0
     step2_new_sens: float = 0.0
     step2_new_dpi: int = 0
+    step2_new_v_sens: float = 0.0
     # Trend context
     trend_note: str = ""
 
@@ -103,6 +105,12 @@ class AnalysisResult:
     # Unified recommendation
     recommendation: UnifiedRecommendation | None = None
     trend: TrendData | None = None
+    # Vertical sensitivity
+    current_v_sens: float = 0.0
+    new_v_sens_combined: float = 0.0
+    new_v_sens_increase: float = 0.0
+    # Game tagging
+    current_game: str = "unknown"
 
 
 def _confidence_weight(n_events: int) -> float:
@@ -299,6 +307,7 @@ def _build_trend(
     previous_session: dict | None,
     current_dpi: int,
     current_sens: float,
+    current_v_sens: float = 0.0,
 ) -> TrendData | None:
     if previous_session is None:
         return None
@@ -313,7 +322,9 @@ def _build_trend(
     prev_settings = previous_session.get("settings", {})
     prev_dpi = prev_settings.get("dpi", 0)
     prev_sens = prev_settings.get("sensitivity", 0.0)
-    settings_changed = (prev_dpi != current_dpi or prev_sens != current_sens)
+    prev_v_sens = prev_settings.get("v_sensitivity", prev_sens)
+    settings_changed = (prev_dpi != current_dpi or prev_sens != current_sens
+                        or prev_v_sens != current_v_sens)
 
     if prev_hit_factor > 0:
         hit_factor_change = (curr_hit_factor - prev_hit_factor) / prev_hit_factor * 100.0
@@ -349,6 +360,7 @@ def _resolve_recommendation(
     trend: TrendData | None,
     current_dpi: int,
     current_sens: float,
+    current_v_sens: float = 0.0,
 ) -> UnifiedRecommendation:
     has_overshoot = enough_clicks and combined_reduction > 0.5
     has_rowing = possibly_too_low and combined_increase > 0.5
@@ -378,6 +390,7 @@ def _resolve_recommendation(
 
         dampened_reduction = _apply_trend_dampening(combined_reduction, trend)
         step2_sens = current_sens * (1 - dampened_reduction / 100.0)
+        step2_v_sens = current_v_sens * (1 - dampened_reduction / 100.0)
 
         note = ""
         if trend and trend.settings_changed:
@@ -388,6 +401,7 @@ def _resolve_recommendation(
             action="multi_step",
             primary_pct=0.0,
             new_sens=current_sens,
+            new_v_sens=current_v_sens,
             new_dpi=step1_dpi,
             reasoning=(
                 "Both overshoot and rowing detected. "
@@ -397,6 +411,7 @@ def _resolve_recommendation(
             step2_pct=dampened_reduction,
             step2_new_sens=step2_sens,
             step2_new_dpi=step1_dpi,
+            step2_new_v_sens=step2_v_sens,
             trend_note=note,
         )
 
@@ -404,6 +419,7 @@ def _resolve_recommendation(
     if has_rowing:
         dampened = _apply_trend_dampening(combined_increase, trend)
         new_sens = current_sens * (1 + dampened / 100.0)
+        new_v_sens = current_v_sens * (1 + dampened / 100.0)
         new_dpi = _snap_dpi(current_dpi * (1 + dampened / 100.0))
         note = ""
         if trend and trend.hit_factor_change_pct > 5.0:
@@ -413,6 +429,7 @@ def _resolve_recommendation(
             action="increase",
             primary_pct=dampened,
             new_sens=new_sens,
+            new_v_sens=new_v_sens,
             new_dpi=new_dpi,
             reasoning="Rowing detected — sensitivity appears too low.",
             trend_note=note,
@@ -422,6 +439,7 @@ def _resolve_recommendation(
     if has_overshoot:
         dampened = _apply_trend_dampening(combined_reduction, trend)
         new_sens = current_sens * (1 - dampened / 100.0)
+        new_v_sens = current_v_sens * (1 - dampened / 100.0)
         new_dpi = _snap_dpi(current_dpi * (1 - dampened / 100.0))
         note = ""
         if trend and trend.hit_factor_change_pct > 5.0:
@@ -431,6 +449,7 @@ def _resolve_recommendation(
             action="reduce",
             primary_pct=dampened,
             new_sens=new_sens,
+            new_v_sens=new_v_sens,
             new_dpi=new_dpi,
             reasoning="Overshoot detected on flick shots.",
             trend_note=note,
@@ -459,7 +478,12 @@ def analyze(
     movement_sample_count: int = 0,
     click_times: list[float] | None = None,
     previous_session: dict | None = None,
+    current_game: str = "unknown",
+    current_v_sens: float = 0.0,
 ) -> AnalysisResult:
+    # Normalize: if no separate V sens provided, default to H sens
+    if current_v_sens == 0.0:
+        current_v_sens = current_sens
     # Click-centric analysis
     click_analysis = _compute_click_analysis(click_aim_events, total_clicks)
 
@@ -488,10 +512,12 @@ def analyze(
 
     # Compute new settings (overshoot reduction — raw, for history)
     new_sens_combined = current_sens * (1 - combined_reduction / 100.0)
+    new_v_sens_combined = current_v_sens * (1 - combined_reduction / 100.0)
     new_dpi_combined = _snap_dpi(current_dpi * (1 - combined_reduction / 100.0))
 
     # Compute new settings (rowing increase — raw, for history)
     new_sens_increase = current_sens * (1 + combined_increase / 100.0)
+    new_v_sens_increase = current_v_sens * (1 + combined_increase / 100.0)
     new_dpi_increase = _snap_dpi(current_dpi * (1 + combined_increase / 100.0))
 
     # Fire rate / hit factor
@@ -507,14 +533,14 @@ def analyze(
     # Build trend data from previous session
     trend = _build_trend(
         fire_rate, click_analysis.median_overshoot_pct,
-        previous_session, current_dpi, current_sens,
+        previous_session, current_dpi, current_sens, current_v_sens,
     )
 
     # Resolve unified recommendation
     enough_clicks = click_analysis.analyzed_clicks >= MIN_EVENTS_FOR_RECOMMENDATION
     recommendation = _resolve_recommendation(
         combined_reduction, combined_increase, possibly_too_low,
-        enough_clicks, trend, current_dpi, current_sens,
+        enough_clicks, trend, current_dpi, current_sens, current_v_sens,
     )
 
     return AnalysisResult(
@@ -539,4 +565,8 @@ def analyze(
         dpi_advisory_level=dpi_level,
         recommendation=recommendation,
         trend=trend,
+        current_v_sens=current_v_sens,
+        new_v_sens_combined=new_v_sens_combined,
+        new_v_sens_increase=new_v_sens_increase,
+        current_game=current_game,
     )

@@ -25,6 +25,7 @@ def save_session(
     click_aim_events: list[ClickAimEvent],
     rowing_events: list[RowingEvent],
     click_times: list[float],
+    game: str = "unknown",
 ) -> Path:
     prefix = _timestamp_prefix()
     sessions = _sessions_dir()
@@ -41,6 +42,7 @@ def save_session(
         "settings": {
             "dpi": result.current_dpi,
             "sensitivity": result.current_sens,
+            "game": game,
         },
         "click_analysis": {
             "total_clicks": ca.total_clicks,

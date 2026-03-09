@@ -11,7 +11,7 @@ from visualizer import print_summary, show_charts
 from overlay import OverlayController, OverlayState
 
 
-def get_user_settings() -> tuple[int, float]:
+def get_user_settings() -> tuple[int, float, float]:
     print()
     print("=" * 50)
     print("  AimFixer - Sensitivity Advisor")
@@ -38,7 +38,21 @@ def get_user_settings() -> tuple[int, float]:
         except ValueError:
             print("  Please enter a valid number.")
 
-    return dpi, sens
+    while True:
+        v_input = input("  Vertical sensitivity (Enter = same): ").strip()
+        if not v_input:
+            v_sens = sens
+            break
+        try:
+            v_sens = float(v_input)
+            if v_sens <= 0:
+                print("  Sensitivity must be positive.")
+                continue
+            break
+        except ValueError:
+            print("  Please enter a valid number.")
+
+    return dpi, sens, v_sens
 
 
 def main():
@@ -65,8 +79,10 @@ def main():
     else:
         dpi, sens = get_user_settings()
 
+    from config import GAME_DISPLAY_NAMES, GAME_LIST
     print()
     print(f"  Settings: {dpi} DPI / {sens} in-game sensitivity")
+    print(f"  Game: {GAME_DISPLAY_NAMES[GAME_LIST[0]]}")
     print()
 
     # macOS accessibility check hint (shown once in terminal before overlay starts)
@@ -89,9 +105,13 @@ def main():
     def on_movement_key():
         overlay.flash_warning("Don't move! Stand still while recording")
 
+    def on_game_change(display_name: str):
+        overlay.set_game(display_name)
+
     collector = MouseCollector(
         on_state_change=on_state_change,
         on_movement_key=on_movement_key,
+        on_game_change=on_game_change,
     )
 
     # Store pending chart data for after the overlay exits
@@ -125,6 +145,8 @@ def main():
         from history import save_session, load_previous_session
         previous_session = load_previous_session(before_current_save=True)
 
+        current_game = collector.get_current_game()
+
         result = analyze(
             click_aim_events=click_aim_events,
             total_clicks=len(click_times),
@@ -136,10 +158,11 @@ def main():
             movement_sample_count=movement_sample_count,
             click_times=click_times,
             previous_session=previous_session,
+            current_game=current_game,
         )
 
         # Save current session AFTER analyze
-        save_session(result, click_aim_events, rowing_events, click_times)
+        save_session(result, click_aim_events, rowing_events, click_times, game=current_game)
 
         print_summary(result, previous_session=previous_session)
 

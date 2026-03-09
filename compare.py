@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from config import (
     CORRECTION_FACTOR, MAX_REDUCTION_PCT,
     MIN_ANALYZED_CLICKS_FOR_HISTORY, MIN_SESSION_DURATION_FOR_HISTORY,
+    GAME_DISPLAY_NAMES,
 )
 from analyzer import _confidence_weight, _snap_dpi
 from history import load_all_sessions
@@ -53,12 +54,13 @@ def _load_and_filter_sessions() -> tuple[list[dict], int]:
     return filtered, dropped
 
 
-def _group_by_settings(sessions: list[dict]) -> dict[tuple[int, float], list[dict]]:
-    """Group sessions by (dpi, sensitivity) tuple."""
-    groups: dict[tuple[int, float], list[dict]] = {}
+def _group_by_settings(sessions: list[dict]) -> dict[tuple[str, int, float], list[dict]]:
+    """Group sessions by (game, dpi, sensitivity) tuple."""
+    groups: dict[tuple[str, int, float], list[dict]] = {}
     for s in sessions:
         settings = s.get("settings", {})
-        key = (settings.get("dpi", 0), settings.get("sensitivity", 0.0))
+        game = settings.get("game", "unknown")
+        key = (game, settings.get("dpi", 0), settings.get("sensitivity", 0.0))
         groups.setdefault(key, []).append(s)
     return groups
 
@@ -196,9 +198,9 @@ def _compute_aggregate_recommendation(
 def _print_history_report(
     filtered: list[dict],
     dropped_count: int,
-    groups: dict[tuple[int, float], list[dict]],
-    aggregates: dict[tuple[int, float], AggregateStats],
-    most_recent_key: tuple[int, float],
+    groups: dict[tuple[str, int, float], list[dict]],
+    aggregates: dict[tuple[str, int, float], AggregateStats],
+    most_recent_key: tuple[str, int, float],
 ):
     total_loaded = len(filtered) + dropped_count
     print()
@@ -211,10 +213,11 @@ def _print_history_report(
     print()
 
     for key, sessions in groups.items():
-        dpi, sens = key
+        game, dpi, sens = key
+        game_display = GAME_DISPLAY_NAMES.get(game, game.replace("_", " ").title())
         stats = aggregates[key]
         print("-" * 50)
-        print(f"  {dpi} DPI / {sens} sens  ({stats.session_count} sessions, {stats.total_analyzed_clicks} clicks)")
+        print(f"  {game_display} @ {dpi} DPI / {sens} sens  ({stats.session_count} sessions, {stats.total_analyzed_clicks} clicks)")
         print("-" * 50)
         print(f"  Median overshoot:      {stats.weighted_median_overshoot_pct:.1f}%")
         print(f"  Median correction:     {stats.weighted_median_correction_mag:.1f}px over {stats.weighted_median_correction_dur_ms:.0f}ms")
@@ -241,12 +244,13 @@ def _print_history_report(
         print()
 
     # Recommendation for most recent group
-    dpi, sens = most_recent_key
+    game, dpi, sens = most_recent_key
+    game_display = GAME_DISPLAY_NAMES.get(game, game.replace("_", " ").title())
     stats = aggregates[most_recent_key]
     rec = _compute_aggregate_recommendation(stats, dpi, sens)
 
     print("-" * 50)
-    print(f"  RECOMMENDATION ({dpi} DPI / {sens} sens)")
+    print(f"  RECOMMENDATION ({game_display} @ {dpi} DPI / {sens} sens)")
     print("-" * 50)
     print(f"  Based on {stats.total_analyzed_clicks} clicks across {stats.session_count} sessions:")
 
@@ -266,8 +270,8 @@ def _print_history_report(
 
 
 def _show_history_charts(
-    groups: dict[tuple[int, float], list[dict]],
-    aggregates: dict[tuple[int, float], AggregateStats],
+    groups: dict[tuple[str, int, float], list[dict]],
+    aggregates: dict[tuple[str, int, float], AggregateStats],
 ):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
     fig.suptitle("AimFixer Session History", fontsize=14, fontweight="bold")
@@ -278,10 +282,11 @@ def _show_history_charts(
 
     session_idx = 0
     for gi, key in enumerate(group_keys):
-        dpi, sens = key
+        game, dpi, sens = key
+        game_display = GAME_DISPLAY_NAMES.get(game, game.replace("_", " ").title())
         stats = aggregates[key]
         color = colors[gi % len(colors)]
-        label = f"{dpi} DPI / {sens}"
+        label = f"{game_display} @ {dpi} DPI / {sens}"
         n = stats.session_count
 
         xs = list(range(session_idx, session_idx + n))

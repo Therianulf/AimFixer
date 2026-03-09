@@ -7,6 +7,7 @@ from pynput import mouse, keyboard
 from config import (
     START_KEY, STOP_KEY, WARP_THRESHOLD_PX,
     MOVEMENT_KEYS_SPECIAL, MOVEMENT_KEYS_CHAR, MOVEMENT_DEBOUNCE_S,
+    GAME_CYCLE_KEY, GAME_LIST, GAME_DISPLAY_NAMES,
 )
 
 
@@ -21,7 +22,7 @@ class MouseSample:
 
 
 class MouseCollector:
-    def __init__(self, on_state_change=None, on_movement_key=None):
+    def __init__(self, on_state_change=None, on_movement_key=None, on_game_change=None):
         self._samples: list[MouseSample] = []
         self._click_times: list[float] = []
         self._collecting = False
@@ -31,6 +32,7 @@ class MouseCollector:
         self._key_listener: keyboard.Listener | None = None
         self._on_state_change = on_state_change
         self._on_movement_key = on_movement_key
+        self._on_game_change = on_game_change
         self._movement_held = False
         self._movement_keys_down: set = set()
         self._last_movement_warn = 0.0
@@ -39,6 +41,9 @@ class MouseCollector:
         # Linux fallback: position-based deltas
         self._prev_x: int | None = None
         self._prev_y: int | None = None
+        # Game tagging
+        self._game_index = 0
+        self._current_game = GAME_LIST[0]
 
     # --- Raw delta recording (called from platform-specific capture) ---
 
@@ -297,6 +302,12 @@ class MouseCollector:
         return False
 
     def _on_key_press(self, key):
+        if key == GAME_CYCLE_KEY and not self._collecting:
+            self._game_index = (self._game_index + 1) % len(GAME_LIST)
+            self._current_game = GAME_LIST[self._game_index]
+            if self._on_game_change:
+                self._on_game_change(GAME_DISPLAY_NAMES[self._current_game])
+
         if key == START_KEY and not self._collecting:
             self._collecting = True
             self._prev_x = None
@@ -371,3 +382,6 @@ class MouseCollector:
 
     def get_click_times(self) -> list[float]:
         return list(self._click_times)
+
+    def get_current_game(self) -> str:
+        return self._current_game
