@@ -1,10 +1,7 @@
 from __future__ import annotations
 import matplotlib
-matplotlib.use("TkAgg")
+matplotlib.use("macosx")
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-from matplotlib.figure import Figure
-import tkinter as tk
 from analyzer import AnalysisResult, group_shot_strings
 from config import MIN_EVENTS_FOR_RECOMMENDATION, STRING_GAP_THRESHOLD_S
 
@@ -206,20 +203,19 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
 
     ca = result.click_analysis
 
-    fig = Figure(figsize=(12, 14))
-    axes = fig.subplots(3, 2)
+    fig, axes = plt.subplots(2, 3, figsize=(18, 9))
     fig.suptitle("AimFixer Analysis", fontsize=14, fontweight="bold")
 
-    # Panel 1: Click overshoot % histogram
+    # Panel 1: Overshoot per shot in pixels (correction magnitude)
     ax = axes[0][0]
-    pcts = ca.overshoot_percentages
-    if pcts:
-        ax.hist(pcts, bins=20, color="#4a90d9", edgecolor="white", alpha=0.85)
-        ax.axvline(ca.median_overshoot_pct, color="red",
-                   linestyle="--", label=f"Median: {ca.median_overshoot_pct:.1f}%")
+    if click_aim_events:
+        mags = [e.correction_magnitude for e in click_aim_events]
+        ax.hist(mags, bins=20, color="#4a90d9", edgecolor="white", alpha=0.85)
+        ax.axvline(ca.median_correction_magnitude, color="red",
+                   linestyle="--", label=f"Median: {ca.median_correction_magnitude:.1f}px")
         ax.legend()
-    ax.set_title("Overshoot % per Shot")
-    ax.set_xlabel("Overshoot %")
+    ax.set_title("Overshoot per Shot (px)")
+    ax.set_xlabel("Overshoot (px)")
     ax.set_ylabel("Count")
 
     # Panel 2: Correction magnitude per shot (colored by swirl vs clean)
@@ -229,15 +225,15 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
         colors = ["#9b59b6" if e.is_swirl else "#2ecc71" for e in click_aim_events]
         ax.bar(range(len(mags)), mags, color=colors, alpha=0.85)
         # Legend
-        ax.bar([], [], color="#9b59b6", label="Swirl")
-        ax.bar([], [], color="#2ecc71", label="Clean")
+        ax.bar([], [], color="#9b59b6", alpha=0.85, label="Swirl")
+        ax.bar([], [], color="#2ecc71", alpha=0.85, label="Clean")
         ax.legend()
     ax.set_title("Correction Magnitude per Shot")
     ax.set_xlabel("Shot #")
     ax.set_ylabel("Correction (px)")
 
     # Panel 3: Correction duration vs overshoot % scatter
-    ax = axes[1][0]
+    ax = axes[0][2]
     if click_aim_events:
         durations = [e.correction_duration * 1000 for e in click_aim_events]
         overshoots = [e.overshoot_percentage for e in click_aim_events]
@@ -250,21 +246,23 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
     ax.set_xlabel("Correction Duration (ms)")
     ax.set_ylabel("Overshoot %")
 
-    # Panel 4: Direction changes per shot histogram
-    ax = axes[1][1]
+    # Panel 4: Direction changes per shot (scatter, colored by swirl vs clean)
+    ax = axes[1][0]
     if click_aim_events:
         dir_changes = [e.correction_direction_changes for e in click_aim_events]
-        max_dc = max(dir_changes) if dir_changes else 0
-        bins = range(0, max(max_dc + 2, 3))
-        ax.hist(dir_changes, bins=bins, color="#e8913a", edgecolor="white", alpha=0.85, align="left")
+        colors = ["#9b59b6" if e.is_swirl else "#2ecc71" for e in click_aim_events]
+        ax.scatter(range(len(dir_changes)), dir_changes, c=colors, alpha=0.6, s=30)
+        ax.scatter([], [], c="#9b59b6", label="Swirl")
+        ax.scatter([], [], c="#2ecc71", label="Clean")
+        ax.legend()
     ax.set_title("Direction Changes per Shot")
-    ax.set_xlabel("Direction Changes")
-    ax.set_ylabel("Count")
+    ax.set_xlabel("Shot #")
+    ax.set_ylabel("Direction Changes")
 
     # Bottom row: rowing panels OR shot interval panels
     if rowing_events:
         # Panel 5: Rowing chain length histogram
-        ax = axes[2][0]
+        ax = axes[1][1]
         chain_lengths = [e.chain_length for e in rowing_events]
         colors = ["#4a90d9" if e.axis == "x" else "#e8913a" for e in rowing_events]
         ax.bar(range(len(chain_lengths)), chain_lengths, color=colors, alpha=0.85)
@@ -272,12 +270,12 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
         ax.scatter([], [], c="#4a90d9", label="Horizontal")
         ax.scatter([], [], c="#e8913a", label="Vertical")
         ax.legend()
-        ax.set_title("Rowing Chain Lengths")
-        ax.set_xlabel("Event #")
-        ax.set_ylabel("Sweeps in chain")
+        ax.set_title("Rowing Chain Lengths\n(each bar = one rowing event)")
+        ax.set_xlabel("Rowing Event #")
+        ax.set_ylabel("Consecutive Same-Direction Sweeps (lifts)")
 
         # Panel 6: Rowing events over time
-        ax = axes[2][1]
+        ax = axes[1][2]
         t0 = rowing_events[0].timestamp
         times = [(e.timestamp - t0) for e in rowing_events]
         ratios = [e.increase_ratio for e in rowing_events]
@@ -294,7 +292,7 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
         intra_intervals = _get_intra_string_intervals(click_aim_events)
 
         # Panel 5: Shot interval histogram (intra-string only)
-        ax = axes[2][0]
+        ax = axes[1][1]
         if intra_intervals:
             ax.hist(intra_intervals, bins=20, color="#27ae60", edgecolor="white", alpha=0.85)
             from statistics import median as _median
@@ -307,7 +305,7 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
         ax.set_ylabel("Count")
 
         # Panel 6: Shot intervals over time (intra-string only)
-        ax = axes[2][1]
+        ax = axes[1][2]
         if intra_intervals:
             sorted_clicks = sorted(e.click_time for e in click_aim_events)
             strings = group_shot_strings(sorted_clicks)
@@ -323,57 +321,9 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
         ax.set_xlabel("Time (seconds)")
         ax.set_ylabel("Interval (ms)")
     else:
-        axes[2][0].set_visible(False)
-        axes[2][1].set_visible(False)
+        axes[1][1].set_visible(False)
+        axes[1][2].set_visible(False)
 
     fig.tight_layout()
-
-    # Build scrollable Tkinter window
-    root = tk.Tk()
-    root.title("AimFixer Analysis")
-
-    # Size window to near-fullscreen
-    screen_w = root.winfo_screenwidth()
-    screen_h = root.winfo_screenheight()
-    win_h = screen_h - 80  # leave room for menubar/dock
-    root.geometry(f"{screen_w}x{win_h}+0+0")
-
-    # Outer frame with canvas + scrollbar
-    outer = tk.Frame(root)
-    outer.pack(fill=tk.BOTH, expand=True)
-
-    canvas = tk.Canvas(outer)
-    scrollbar = tk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
-    canvas.configure(yscrollcommand=scrollbar.set)
-
-    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-    # Inner frame for the figure
-    inner = tk.Frame(canvas)
-    canvas.create_window((0, 0), window=inner, anchor="nw")
-
-    # Embed matplotlib figure
-    fig_canvas = FigureCanvasTkAgg(fig, master=inner)
-    fig_canvas.draw()
-    fig_widget = fig_canvas.get_tk_widget()
-    fig_widget.pack(fill=tk.BOTH, expand=True)
-
-    # Navigation toolbar for zoom/pan/save
-    toolbar = NavigationToolbar2Tk(fig_canvas, inner)
-    toolbar.update()
-    toolbar.pack(side=tk.BOTTOM, fill=tk.X)
-
-    def _on_configure(event):
-        canvas.configure(scrollregion=canvas.bbox("all"))
-
-    inner.bind("<Configure>", _on_configure)
-
-    # Mousewheel scrolling (macOS uses MouseWheel with delta)
-    def _on_mousewheel(event):
-        # macOS sends event.delta in units of 120 (or raw pixels on trackpad)
-        canvas.yview_scroll(int(-event.delta), "units")
-
-    canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-    root.mainloop()
+    fig.canvas.manager.set_window_title("AimFixer Analysis")
+    plt.show()

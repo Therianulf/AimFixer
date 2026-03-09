@@ -5,7 +5,7 @@ import threading
 from dataclasses import dataclass
 from pynput import mouse, keyboard
 from config import (
-    TOGGLE_KEY, WARP_THRESHOLD_PX,
+    START_KEY, STOP_KEY, WARP_THRESHOLD_PX,
     MOVEMENT_KEYS_SPECIAL, MOVEMENT_KEYS_CHAR, MOVEMENT_DEBOUNCE_S,
 )
 
@@ -107,6 +107,10 @@ class MouseCollector:
         import Quartz
 
         def callback(proxy, event_type, event, refcon):
+            if event_type == Quartz.kCGEventLeftMouseDown:
+                if self._collecting:
+                    self._click_times.append(time.perf_counter())
+                return event
             dx = Quartz.CGEventGetIntegerValueField(
                 event, Quartz.kCGMouseEventDeltaX)
             dy = Quartz.CGEventGetIntegerValueField(
@@ -116,6 +120,7 @@ class MouseCollector:
 
         event_mask = (
             Quartz.CGEventMaskBit(Quartz.kCGEventMouseMoved)
+            | Quartz.CGEventMaskBit(Quartz.kCGEventLeftMouseDown)
             | Quartz.CGEventMaskBit(Quartz.kCGEventLeftMouseDragged)
             | Quartz.CGEventMaskBit(Quartz.kCGEventRightMouseDragged)
             | Quartz.CGEventMaskBit(Quartz.kCGEventOtherMouseDragged)
@@ -292,27 +297,26 @@ class MouseCollector:
         return False
 
     def _on_key_press(self, key):
-        if key == TOGGLE_KEY:
-            if not self._collecting:
-                self._collecting = True
-                self._prev_x = None
-                self._prev_y = None
-                self._samples.clear()
-                self._click_times.clear()
-                self._movement_keys_down.clear()
-                self._movement_held = False
-                self._started.set()
-                if self._on_state_change:
-                    self._on_state_change("recording")
-                else:
-                    print("  Recording started! Move your mouse / aim in-game.")
+        if key == START_KEY and not self._collecting:
+            self._collecting = True
+            self._prev_x = None
+            self._prev_y = None
+            self._samples.clear()
+            self._click_times.clear()
+            self._movement_keys_down.clear()
+            self._movement_held = False
+            self._started.set()
+            if self._on_state_change:
+                self._on_state_change("recording")
             else:
-                self._collecting = False
-                self._done.set()
-                if self._on_state_change:
-                    self._on_state_change("stopped")
-                else:
-                    print("  Recording stopped.")
+                print("  Recording started! Move your mouse / aim in-game.")
+        elif key == STOP_KEY and self._collecting:
+            self._collecting = False
+            self._done.set()
+            if self._on_state_change:
+                self._on_state_change("stopped")
+            else:
+                print("  Recording stopped.")
 
         if self._collecting and self._is_movement_key(key):
             self._movement_keys_down.add(str(key))
@@ -334,9 +338,11 @@ class MouseCollector:
     def start(self):
         """Start listeners and platform-specific delta capture."""
         # Use on_move only on Linux as fallback
+        # On macOS, clicks are captured via Quartz event tap instead of pynput
         on_move = self._on_move_fallback if sys.platform == 'linux' else None
+        on_click = None if sys.platform == 'darwin' else self._on_click
         self._mouse_listener = mouse.Listener(
-            on_move=on_move, on_click=self._on_click)
+            on_move=on_move, on_click=on_click)
         self._key_listener = keyboard.Listener(
             on_press=self._on_key_press,
             on_release=self._on_key_release,

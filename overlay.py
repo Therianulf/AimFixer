@@ -66,7 +66,7 @@ class OverlayState(Enum):
 
 
 _STATE_TEXT = {
-    OverlayState.WAITING: "Press F6 to start recording",
+    OverlayState.WAITING: "Press F5 to start recording",
     OverlayState.RECORDING: "\U0001F534 Recording\u2026  Press F6 to stop",
     OverlayState.ANALYZING: "Recording stopped. Analyzing\u2026",
 }

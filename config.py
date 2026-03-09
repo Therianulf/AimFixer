@@ -21,8 +21,9 @@ Y_WEIGHT = 1.0
 # Cursor warp detection (GeForce Now relative mouse mode)
 WARP_THRESHOLD_PX = 100
 
-# Hotkey
-TOGGLE_KEY = keyboard.Key.f6
+# Hotkeys
+START_KEY = keyboard.Key.f5
+STOP_KEY = keyboard.Key.f6
 
 # Rowing detection
 MIN_ROWING_GAP_S = 0.050           # Min gap to count as mouse lift (50ms = realistic lift minimum)
