@@ -4,10 +4,11 @@ A mouse overshoot detection and sensitivity advisor for FPS games. AimFixer moni
 
 ## How It Works
 
-1. **Record** — Press F6 to start/stop recording your mouse movements during gameplay
+1. **Record** — Press F5 to start and F6 to stop recording your mouse movements during gameplay
 2. **Detect** — AimFixer analyzes your input to find overshoot patterns (when you flick past a target and correct back)
 3. **Recommend** — Get a tailored sensitivity/DPI adjustment based on your actual aim behavior
-4. **Visualize** — View detailed charts breaking down your overshoots by axis, velocity, and over time
+4. **Visualize** — View detailed charts breaking down your overshoots, corrections, and fire rate
+5. **Compare** — Aggregate stats across multiple sessions for stable, reliable recommendations
 
 ### The Science
 
@@ -31,24 +32,40 @@ On **macOS**, you'll need to grant accessibility permissions to your terminal ap
 
 ## Usage
 
+### Single Session
+
 ```bash
 python aimfixer.py
+# or with CLI args:
+python aimfixer.py 1600 1.73
 ```
 
 You'll be prompted to enter your current DPI and in-game sensitivity. Then:
 
-- Press **F6** to start recording
+- Press **F5** to start recording
 - Play your game normally — flick, track, aim as you usually do
-- Press **F6** again to stop
+- Press **F6** to stop
 
 AimFixer will display:
 
-- **Overshoot statistics** — count, median/mean/p75 overshoot percentages per axis
-- **Sensitivity recommendation** — three options:
-  - **Option A:** Adjust in-game sensitivity only
-  - **Option B:** Adjust DPI only
-  - **Option C:** Per-axis adjustments (if your game supports it)
-- **4-panel chart** — X/Y overshoot histograms, flick velocity vs. overshoot scatter plot, and overshoot trend over time (reveals fatigue)
+- **Click-centric overshoot statistics** — median/mean overshoot %, correction magnitude, swirl detection
+- **Fire rate analysis** — shots per minute, shot strings, aim efficiency, hit factor
+- **Rowing detection** — identifies mouse-lift-and-replace patterns (sensitivity too low)
+- **Unified recommendation** — reduce, increase, or keep sensitivity based on all signals
+- **6-panel chart** — overshoot histograms, correction per shot, duration vs overshoot scatter, direction changes, and shot interval analysis
+
+### Multi-Session History
+
+```bash
+python aimfixer.py history
+```
+
+Aggregates all saved sessions for a more stable recommendation:
+
+- Groups sessions by DPI/sensitivity settings
+- Filters out unreliable sessions (≤30 clicks, <30s duration, missing fire rate)
+- Uses click-weighted medians so longer sessions contribute more
+- Shows per-session breakdown and trend charts for overshoot and hit factor
 
 ## Configuration
 
@@ -56,13 +73,15 @@ All tunable parameters live in `config.py`:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `TOGGLE_KEY` | F6 | Hotkey to start/stop recording |
-| `EMA_ALPHA` | 0.3 | Smoothing factor (higher = less smoothing) |
-| `MIN_FLICK_VELOCITY_PX_S` | 800.0 | Minimum velocity to count as a deliberate flick |
-| `MAX_CORRECTION_GAP_S` | 0.050 | Max time gap between flick and correction (seconds) |
-| `MAX_CORRECTION_RATIO` | 0.50 | Correction must be ≤50% of flick distance |
-| `CORRECTION_FACTOR` | 0.60 | How aggressively to recommend sensitivity changes |
+| `START_KEY` | F5 | Hotkey to start recording |
+| `STOP_KEY` | F6 | Hotkey to stop recording |
+| `EMA_ALPHA` | 0.08 | Smoothing factor (higher = less smoothing) |
+| `MIN_FLICK_VELOCITY_PX_S` | 100.0 | Minimum velocity to count as a deliberate flick |
+| `CORRECTION_FACTOR` | 0.15 | How aggressively to recommend sensitivity changes |
+| `MAX_REDUCTION_PCT` | 30.0 | Maximum recommended reduction per step |
 | `DPI_STEP` | 50 | DPI rounding granularity |
+| `MIN_ANALYZED_CLICKS_FOR_HISTORY` | 30 | Minimum clicks for a session to count in history |
+| `MIN_SESSION_DURATION_FOR_HISTORY` | 30.0 | Minimum session duration (seconds) for history |
 
 ## Tips for Best Results
 

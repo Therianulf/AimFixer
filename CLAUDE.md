@@ -18,7 +18,9 @@ aimfixer.py    - Main entry point, orchestrates the pipeline
 collector.py   - MouseCollector: records mouse movement via F6 hotkey toggle
 detector.py    - OvershootDetector: 3-stage detection (EMA filter → sweep segmentation → overshoot classification)
 analyzer.py    - Statistical analysis + sensitivity reduction recommendations
-visualizer.py  - Terminal summary + 4-panel matplotlib charts
+visualizer.py  - Terminal summary + 6-panel matplotlib charts
+compare.py     - Multi-session history comparison and aggregate recommendations
+history.py     - Session persistence (save/load JSON summaries + JSONL events)
 config.py      - All tunable constants (thresholds, weights, hotkey)
 pyproject.toml - Project metadata and dependencies
 ```
@@ -32,8 +34,14 @@ source .venv/bin/activate
 # Install dependencies (if needed)
 pip install pynput matplotlib
 
-# Run
+# Run (interactive — prompts for DPI + sensitivity)
 python aimfixer.py
+
+# Run with CLI args
+python aimfixer.py <dpi> <sensitivity>
+
+# Multi-session history comparison
+python aimfixer.py history
 ```
 
 ## Architecture / Data Flow
@@ -53,18 +61,32 @@ Visualizer → Text summary + charts (histograms, scatter, time series)
 ## Key Algorithm Details
 
 - **Overshoot = fast flick followed by a small, slow correction in the opposite direction**
-- Detection uses 6 criteria: direction reversal, timing gap (<50ms), magnitude ratio (<50%), flick velocity (≥800 px/s), velocity drop, correction duration (<300ms)
-- Sensitivity recommendation uses median overshoot × 0.60 correction factor × confidence weight
+- Click-centric analysis: detects approach flick + correction jitter around each click
+- Sensitivity recommendation uses median overshoot × 0.15 correction factor × confidence weight
 - X-axis weighted 1.5×, Y-axis weighted 1.0× (horizontal aim matters more in FPS)
 - Warp detection filters out cursor jumps >100px (cloud gaming compatibility)
+- Rowing detection identifies mouse-lift-and-replace patterns (sensitivity too low)
+- Shot string segmentation groups clicks into combat engagements for fire rate analysis
+- Hit factor = (shots_per_minute / 60) × aim_efficiency — composite performance metric
+
+## History Comparison (`python aimfixer.py history`)
+
+- Aggregates stats across all saved sessions in `sessions/`
+- Filters out unreliable sessions: ≤30 analyzed clicks, <30s duration, or missing fire rate data
+- Groups sessions by (DPI, sensitivity) settings
+- Uses click-weighted medians (heavier sessions contribute proportionally more)
+- Recommendation targets the most recent settings group, no trend dampening (aggregate already smooths variance)
+- 2-panel trend chart: overshoot % and hit factor over sessions
 
 ## Development Notes
 
 - No tests currently exist
 - All config constants live in `config.py` — change thresholds there
-- The F6 hotkey is defined via `TOGGLE_KEY` in config.py
+- F5 starts recording, F6 stops recording (defined via `START_KEY`/`STOP_KEY` in config.py)
 - DPI recommendations snap to nearest 50 (`DPI_STEP`)
 - Confidence weighting scales down recommendations when sample count is low
+- Sessions are saved as JSON summaries + JSONL event logs in `sessions/`
+- Unified recommendation system resolves overshoot vs rowing conflicts with trend dampening
 
 ## Code Navigation Preferences
 
