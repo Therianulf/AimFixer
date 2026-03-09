@@ -122,6 +122,18 @@ def save_session(
     return summary_path
 
 
+def load_all_sessions() -> list[dict]:
+    """Load all session summaries, sorted chronologically."""
+    sessions = _sessions_dir()
+    results = []
+    for path in sorted(sessions.glob("*_summary.json")):
+        try:
+            results.append(json.loads(path.read_text()))
+        except (json.JSONDecodeError, OSError):
+            continue
+    return results
+
+
 def load_previous_session(before_current_save: bool = False) -> dict | None:
     sessions = _sessions_dir()
     summaries = sorted(sessions.glob("*_summary.json"))

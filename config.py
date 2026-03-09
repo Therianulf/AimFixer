@@ -55,6 +55,10 @@ OVERLAY_WARNING_FLASH_S = 2.0
 # Shot string segmentation
 STRING_GAP_THRESHOLD_S = 2.0  # Max gap between shots in a combat string
 
+# History comparison
+MIN_ANALYZED_CLICKS_FOR_HISTORY = 30
+MIN_SESSION_DURATION_FOR_HISTORY = 30.0  # seconds
+
 # DPI snapping
 DPI_STEP = 50
 

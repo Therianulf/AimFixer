@@ -42,6 +42,12 @@ def get_user_settings() -> tuple[int, float]:
 
 
 def main():
+    # Subcommand: history comparison
+    if len(sys.argv) >= 2 and sys.argv[1] == "history":
+        from compare import run_history_comparison
+        run_history_comparison()
+        return
+
     # Accept optional CLI args: aimfixer.py <dpi> <sensitivity>
     if len(sys.argv) == 3:
         try:
