@@ -3,7 +3,7 @@ import matplotlib
 matplotlib.use("macosx")
 import matplotlib.pyplot as plt
 from analyzer import AnalysisResult, group_shot_strings
-from config import MIN_EVENTS_FOR_RECOMMENDATION, STRING_GAP_THRESHOLD_S
+from config import MIN_EVENTS_FOR_RECOMMENDATION, format_sens
 
 
 def print_summary(result: AnalysisResult, previous_session: dict | None = None):
@@ -17,10 +17,11 @@ def print_summary(result: AnalysisResult, previous_session: dict | None = None):
     print("=" * 50)
     print(f"  Session duration:    {duration_m}m {duration_s}s")
     print(f"  Samples collected:   {result.total_samples:,}")
+    game = result.current_game
     if result.current_v_sens != result.current_sens:
-        print(f"  Current settings:    {result.current_dpi} DPI / H:{result.current_sens} V:{result.current_v_sens} in-game sens")
+        print(f"  Current settings:    {result.current_dpi} DPI / H:{format_sens(result.current_sens, game)} V:{format_sens(result.current_v_sens, game)} in-game sens")
     else:
-        print(f"  Current settings:    {result.current_dpi} DPI / {result.current_sens} in-game sens")
+        print(f"  Current settings:    {result.current_dpi} DPI / {format_sens(result.current_sens, game)} in-game sens")
 
     # Click-centric stats
     print()
@@ -84,17 +85,17 @@ def print_summary(result: AnalysisResult, previous_session: dict | None = None):
         elif rec.action == "reduce":
             print(f"  Reduce in-game sensitivity by ~{rec.primary_pct:.0f}%")
             if result.current_v_sens != result.current_sens:
-                print(f"    H: {result.current_sens} -> {rec.new_sens:.2f}")
-                print(f"    V: {result.current_v_sens} -> {rec.new_v_sens:.2f}")
+                print(f"    H: {format_sens(result.current_sens, game)} -> {format_sens(rec.new_sens, game)}")
+                print(f"    V: {format_sens(result.current_v_sens, game)} -> {format_sens(rec.new_v_sens, game)}")
             else:
-                print(f"    {result.current_sens} -> {rec.new_sens:.2f}")
+                print(f"    {format_sens(result.current_sens, game)} -> {format_sens(rec.new_sens, game)}")
         elif rec.action == "increase":
             print(f"  Increase in-game sensitivity by ~{rec.primary_pct:.0f}%")
             if result.current_v_sens != result.current_sens:
-                print(f"    H: {result.current_sens} -> {rec.new_sens:.2f}")
-                print(f"    V: {result.current_v_sens} -> {rec.new_v_sens:.2f}")
+                print(f"    H: {format_sens(result.current_sens, game)} -> {format_sens(rec.new_sens, game)}")
+                print(f"    V: {format_sens(result.current_v_sens, game)} -> {format_sens(rec.new_v_sens, game)}")
             else:
-                print(f"    {result.current_sens} -> {rec.new_sens:.2f}")
+                print(f"    {format_sens(result.current_sens, game)} -> {format_sens(rec.new_sens, game)}")
         elif rec.action == "multi_step":
             print("  Two-step adjustment recommended:")
             print(f"    Step 1: Bump DPI from {result.current_dpi} to {rec.new_dpi}")
@@ -102,10 +103,10 @@ def print_summary(result: AnalysisResult, previous_session: dict | None = None):
             if rec.step2_pct > 0.5:
                 print(f"    Step 2: If overshoot persists, reduce sens by ~{rec.step2_pct:.0f}%")
                 if result.current_v_sens != result.current_sens:
-                    print(f"            H: {result.current_sens} -> {rec.step2_new_sens:.2f}")
-                    print(f"            V: {result.current_v_sens} -> {rec.step2_new_v_sens:.2f}")
+                    print(f"            H: {format_sens(result.current_sens, game)} -> {format_sens(rec.step2_new_sens, game)}")
+                    print(f"            V: {format_sens(result.current_v_sens, game)} -> {format_sens(rec.step2_new_v_sens, game)}")
                 else:
-                    print(f"            {result.current_sens} -> {rec.step2_new_sens:.2f}")
+                    print(f"            {format_sens(result.current_sens, game)} -> {format_sens(rec.step2_new_sens, game)}")
 
         if rec.trend_note:
             print()
@@ -170,10 +171,11 @@ def _print_comparison(result: AnalysisResult, prev: dict):
     cur_spm = result.fire_rate.shots_per_minute if result.fire_rate else 0.0
 
     print()
+    game = result.current_game
     if prev_v_sens != prev_sens:
-        print(f"  vs Previous ({prev_dpi} DPI / H:{prev_sens} V:{prev_v_sens} sens):")
+        print(f"  vs Previous ({prev_dpi} DPI / H:{format_sens(float(prev_sens), game)} V:{format_sens(float(prev_v_sens), game)} sens):")
     else:
-        print(f"  vs Previous ({prev_dpi} DPI / {prev_sens} sens):")
+        print(f"  vs Previous ({prev_dpi} DPI / {format_sens(float(prev_sens), game)} sens):")
     print(f"    Overshoot:    {prev_overshoot:.1f}% -> {cur_overshoot:.1f}%"
           f"{_delta_str(prev_overshoot, cur_overshoot, lower_is_good=True)}")
     if prev_hit_factor or cur_hit_factor:

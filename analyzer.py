@@ -7,7 +7,7 @@ from config import (
     X_WEIGHT, Y_WEIGHT, DPI_STEP,
     ROWING_CORRECTION_FACTOR, MIN_ROWING_EVENTS_FOR_RECOMMENDATION,
     DPI_SWEET_SPOT_LOW, DPI_SWEET_SPOT_HIGH, DPI_HARD_LOW, DPI_HARD_HIGH,
-    STRING_GAP_THRESHOLD_S,
+    STRING_GAP_THRESHOLD_S, snap_sens,
 )
 
 
@@ -361,6 +361,7 @@ def _resolve_recommendation(
     current_dpi: int,
     current_sens: float,
     current_v_sens: float = 0.0,
+    game: str = "unknown",
 ) -> UnifiedRecommendation:
     has_overshoot = enough_clicks and combined_reduction > 0.5
     has_rowing = possibly_too_low and combined_increase > 0.5
@@ -389,8 +390,8 @@ def _resolve_recommendation(
             step1_dpi = _snap_dpi(current_dpi + DPI_STEP * 2)
 
         dampened_reduction = _apply_trend_dampening(combined_reduction, trend)
-        step2_sens = current_sens * (1 - dampened_reduction / 100.0)
-        step2_v_sens = current_v_sens * (1 - dampened_reduction / 100.0)
+        step2_sens = snap_sens(current_sens * (1 - dampened_reduction / 100.0), game)
+        step2_v_sens = snap_sens(current_v_sens * (1 - dampened_reduction / 100.0), game)
 
         note = ""
         if trend and trend.settings_changed:
@@ -418,8 +419,8 @@ def _resolve_recommendation(
     # Case 3: Only rowing -> increase
     if has_rowing:
         dampened = _apply_trend_dampening(combined_increase, trend)
-        new_sens = current_sens * (1 + dampened / 100.0)
-        new_v_sens = current_v_sens * (1 + dampened / 100.0)
+        new_sens = snap_sens(current_sens * (1 + dampened / 100.0), game)
+        new_v_sens = snap_sens(current_v_sens * (1 + dampened / 100.0), game)
         new_dpi = _snap_dpi(current_dpi * (1 + dampened / 100.0))
         note = ""
         if trend and trend.hit_factor_change_pct > 5.0:
@@ -438,8 +439,8 @@ def _resolve_recommendation(
     # Case 4: Only overshoot -> reduce
     if has_overshoot:
         dampened = _apply_trend_dampening(combined_reduction, trend)
-        new_sens = current_sens * (1 - dampened / 100.0)
-        new_v_sens = current_v_sens * (1 - dampened / 100.0)
+        new_sens = snap_sens(current_sens * (1 - dampened / 100.0), game)
+        new_v_sens = snap_sens(current_v_sens * (1 - dampened / 100.0), game)
         new_dpi = _snap_dpi(current_dpi * (1 - dampened / 100.0))
         note = ""
         if trend and trend.hit_factor_change_pct > 5.0:
@@ -511,13 +512,13 @@ def analyze(
     possibly_too_low = total_rowing >= MIN_ROWING_EVENTS_FOR_RECOMMENDATION
 
     # Compute new settings (overshoot reduction — raw, for history)
-    new_sens_combined = current_sens * (1 - combined_reduction / 100.0)
-    new_v_sens_combined = current_v_sens * (1 - combined_reduction / 100.0)
+    new_sens_combined = snap_sens(current_sens * (1 - combined_reduction / 100.0), current_game)
+    new_v_sens_combined = snap_sens(current_v_sens * (1 - combined_reduction / 100.0), current_game)
     new_dpi_combined = _snap_dpi(current_dpi * (1 - combined_reduction / 100.0))
 
     # Compute new settings (rowing increase — raw, for history)
-    new_sens_increase = current_sens * (1 + combined_increase / 100.0)
-    new_v_sens_increase = current_v_sens * (1 + combined_increase / 100.0)
+    new_sens_increase = snap_sens(current_sens * (1 + combined_increase / 100.0), current_game)
+    new_v_sens_increase = snap_sens(current_v_sens * (1 + combined_increase / 100.0), current_game)
     new_dpi_increase = _snap_dpi(current_dpi * (1 + combined_increase / 100.0))
 
     # Fire rate / hit factor
@@ -541,6 +542,7 @@ def analyze(
     recommendation = _resolve_recommendation(
         combined_reduction, combined_increase, possibly_too_low,
         enough_clicks, trend, current_dpi, current_sens, current_v_sens,
+        game=current_game,
     )
 
     return AnalysisResult(

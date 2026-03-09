@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from config import (
     CORRECTION_FACTOR, MAX_REDUCTION_PCT,
     MIN_ANALYZED_CLICKS_FOR_HISTORY, MIN_SESSION_DURATION_FOR_HISTORY,
-    GAME_DISPLAY_NAMES,
+    GAME_DISPLAY_NAMES, format_sens,
 )
 from analyzer import _confidence_weight, _snap_dpi
 from history import load_all_sessions
@@ -207,11 +207,11 @@ def _compute_aggregate_recommendation(
         }
 
 
-def _format_sens_str(sens: float, v_sens: float) -> str:
+def _format_sens_str(sens: float, v_sens: float, game: str = "unknown") -> str:
     """Format sensitivity as single value or H:x V:y when they differ."""
     if v_sens != sens:
-        return f"H:{sens} V:{v_sens} sens"
-    return f"{sens} sens"
+        return f"H:{format_sens(sens, game)} V:{format_sens(v_sens, game)} sens"
+    return f"{format_sens(sens, game)} sens"
 
 
 def _print_history_report(
@@ -234,7 +234,7 @@ def _print_history_report(
     for key, sessions in groups.items():
         game, dpi, sens, v_sens = key
         game_display = GAME_DISPLAY_NAMES.get(game, game.replace("_", " ").title())
-        sens_str = _format_sens_str(sens, v_sens)
+        sens_str = _format_sens_str(sens, v_sens, game)
         stats = aggregates[key]
         print("-" * 50)
         print(f"  {game_display} @ {dpi} DPI / {sens_str}  ({stats.session_count} sessions, {stats.total_analyzed_clicks} clicks)")
@@ -266,7 +266,7 @@ def _print_history_report(
     # Recommendation for most recent group
     game, dpi, sens, v_sens = most_recent_key
     game_display = GAME_DISPLAY_NAMES.get(game, game.replace("_", " ").title())
-    sens_str = _format_sens_str(sens, v_sens)
+    sens_str = _format_sens_str(sens, v_sens, game)
     stats = aggregates[most_recent_key]
     rec = _compute_aggregate_recommendation(stats, dpi, sens, v_sens)
 
@@ -278,19 +278,19 @@ def _print_history_report(
     if rec["action"] == "reduce":
         print(f"  Reduce in-game sensitivity by ~{rec['reduction_pct']:.0f}%")
         if v_sens != sens:
-            print(f"    H: {sens} -> {rec['new_sens']:.2f}")
-            print(f"    V: {v_sens} -> {rec['new_v_sens']:.2f}")
+            print(f"    H: {format_sens(sens, game)} -> {format_sens(rec['new_sens'], game)}")
+            print(f"    V: {format_sens(v_sens, game)} -> {format_sens(rec['new_v_sens'], game)}")
         else:
-            print(f"    {sens} -> {rec['new_sens']:.2f}")
+            print(f"    {format_sens(sens, game)} -> {format_sens(rec['new_sens'], game)}")
     elif rec["action"] == "increase":
         print(f"  {rec['note']}")
     elif rec["action"] == "mixed":
         print(f"  Reduce in-game sensitivity by ~{rec['reduction_pct']:.0f}%")
         if v_sens != sens:
-            print(f"    H: {sens} -> {rec['new_sens']:.2f}")
-            print(f"    V: {v_sens} -> {rec['new_v_sens']:.2f}")
+            print(f"    H: {format_sens(sens, game)} -> {format_sens(rec['new_sens'], game)}")
+            print(f"    V: {format_sens(v_sens, game)} -> {format_sens(rec['new_v_sens'], game)}")
         else:
-            print(f"    {sens} -> {rec['new_sens']:.2f}")
+            print(f"    {format_sens(sens, game)} -> {format_sens(rec['new_sens'], game)}")
         print(f"  Note: {rec['note']}")
     elif rec["action"] == "keep":
         print(f"  {rec['note']}")
@@ -315,7 +315,7 @@ def _show_history_charts(
         game_display = GAME_DISPLAY_NAMES.get(game, game.replace("_", " ").title())
         stats = aggregates[key]
         color = colors[gi % len(colors)]
-        sens_label = _format_sens_str(sens, v_sens)
+        sens_label = _format_sens_str(sens, v_sens, game)
         label = f"{game_display} @ {dpi} DPI / {sens_label}"
         n = stats.session_count
 

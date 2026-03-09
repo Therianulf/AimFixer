@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from analyzer import AnalysisResult
+from config import snap_sens
 from detector import ClickAimEvent, RowingEvent
 
 
@@ -64,8 +65,8 @@ def save_session(
         },
         "recommendations": {
             "reduction_pct": round(result.combined_reduction_pct, 1),
-            "new_sens": round(result.new_sens_combined, 2),
-            "new_v_sens": round(result.new_v_sens_combined, 2),
+            "new_sens": snap_sens(result.new_sens_combined, game),
+            "new_v_sens": snap_sens(result.new_v_sens_combined, game),
             "new_dpi": result.new_dpi_combined,
             "increase_pct": round(result.combined_increase_pct, 1),
             "dpi_advisory": result.dpi_advisory,

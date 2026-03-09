@@ -80,12 +80,12 @@ def main():
     else:
         dpi, sens, v_sens = get_user_settings()
 
-    from config import GAME_DISPLAY_NAMES, GAME_LIST
+    from config import GAME_DISPLAY_NAMES, GAME_LIST, format_sens
     print()
     if v_sens != sens:
-        print(f"  Settings: {dpi} DPI / H:{sens} V:{v_sens} in-game sensitivity")
+        print(f"  Settings: {dpi} DPI / H:{format_sens(sens, GAME_LIST[0])} V:{format_sens(v_sens, GAME_LIST[0])} in-game sensitivity")
     else:
-        print(f"  Settings: {dpi} DPI / {sens} in-game sensitivity")
+        print(f"  Settings: {dpi} DPI / {format_sens(sens, GAME_LIST[0])} in-game sensitivity")
     print(f"  Game: {GAME_DISPLAY_NAMES[GAME_LIST[0]]}")
     print()
 
