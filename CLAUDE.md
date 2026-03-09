@@ -39,6 +39,7 @@ python aimfixer.py
 
 # Run with CLI args
 python aimfixer.py <dpi> <sensitivity>
+python aimfixer.py <dpi> <h_sensitivity> <v_sensitivity>
 
 # Multi-session history comparison
 python aimfixer.py history
@@ -47,7 +48,7 @@ python aimfixer.py history
 ## Architecture / Data Flow
 
 ```
-User Input (DPI + Sensitivity)
+User Input (DPI + H/V Sensitivity)
     ↓
 MouseCollector → Raw samples (timestamp, x, y, dx, dy)
     ↓
@@ -73,7 +74,7 @@ Visualizer → Text summary + charts (histograms, scatter, time series)
 
 - Aggregates stats across all saved sessions in `sessions/`
 - Filters out unreliable sessions: ≤30 analyzed clicks, <30s duration, or missing fire rate data
-- Groups sessions by (DPI, sensitivity) settings
+- Groups sessions by (DPI, H sensitivity, V sensitivity) settings
 - Uses click-weighted medians (heavier sessions contribute proportionally more)
 - Recommendation targets the most recent settings group, no trend dampening (aggregate already smooths variance)
 - 2-panel trend chart: overshoot % and hit factor over sessions
@@ -87,6 +88,11 @@ Visualizer → Text summary + charts (histograms, scatter, time series)
 - Confidence weighting scales down recommendations when sample count is low
 - Sessions are saved as JSON summaries + JSONL event logs in `sessions/`
 - Unified recommendation system resolves overshoot vs rowing conflicts with trend dampening
+- Per-game split H/V sensitivity support — games like R6 Siege have separate horizontal/vertical sliders
+- `GAME_SPLIT_SENS` in config.py marks which games natively support split sens (informational)
+- When V sens differs from H sens, recommendations show separate H/V values using the same percentage adjustment
+- Interactive prompt always asks for V sens (Enter defaults to same as H); CLI supports `<dpi> <h_sens> <v_sens>`
+- Old sessions without `v_sensitivity` fall back to `sensitivity` (backward compatible)
 
 ## Code Navigation Preferences
 

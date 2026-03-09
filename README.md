@@ -38,9 +38,11 @@ On **macOS**, you'll need to grant accessibility permissions to your terminal ap
 python aimfixer.py
 # or with CLI args:
 python aimfixer.py 1600 1.73
+# split horizontal/vertical sensitivity (e.g. R6 Siege):
+python aimfixer.py 1600 1.73 1.20
 ```
 
-You'll be prompted to enter your current DPI and in-game sensitivity. Then:
+You'll be prompted to enter your current DPI, in-game sensitivity, and optionally a separate vertical sensitivity (press Enter to use the same value). Then:
 
 - Press **F5** to start recording
 - Play your game normally — flick, track, aim as you usually do
@@ -62,7 +64,7 @@ python aimfixer.py history
 
 Aggregates all saved sessions for a more stable recommendation:
 
-- Groups sessions by DPI/sensitivity settings
+- Groups sessions by DPI/sensitivity/V-sensitivity settings
 - Filters out unreliable sessions (≤30 clicks, <30s duration, missing fire rate)
 - Uses click-weighted medians so longer sessions contribute more
 - Shows per-session breakdown and trend charts for overshoot and hit factor
@@ -82,6 +84,16 @@ All tunable parameters live in `config.py`:
 | `DPI_STEP` | 50 | DPI rounding granularity |
 | `MIN_ANALYZED_CLICKS_FOR_HISTORY` | 30 | Minimum clicks for a session to count in history |
 | `MIN_SESSION_DURATION_FOR_HISTORY` | 30.0 | Minimum session duration (seconds) for history |
+| `GAME_SPLIT_SENS` | per-game | Which games natively support split H/V sensitivity |
+
+### Split Horizontal/Vertical Sensitivity
+
+Some games (like R6 Siege) have separate horizontal and vertical sensitivity sliders. AimFixer supports this:
+
+- **Interactive mode** — After entering your sensitivity, you'll be asked for vertical sensitivity (Enter = same as horizontal)
+- **CLI** — Pass three numbers: `python aimfixer.py <dpi> <h_sens> <v_sens>`
+- When H and V differ, recommendations show separate values for each axis using the same percentage adjustment
+- When H and V are the same, everything displays as a single value
 
 ## Tips for Best Results
 
