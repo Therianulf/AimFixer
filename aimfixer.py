@@ -115,6 +115,10 @@ def main():
         click_aim_events = detector.get_click_aim_events()
         rowing_events = detector.get_rowing_events()
 
+        # Load previous session BEFORE analyze so trend data is available
+        from history import save_session, load_previous_session
+        previous_session = load_previous_session(before_current_save=True)
+
         result = analyze(
             click_aim_events=click_aim_events,
             total_clicks=len(click_times),
@@ -125,12 +129,11 @@ def main():
             rowing_events=rowing_events,
             movement_sample_count=movement_sample_count,
             click_times=click_times,
+            previous_session=previous_session,
         )
 
-        # Save session and load previous for comparison
-        from history import save_session, load_previous_session
+        # Save current session AFTER analyze
         save_session(result, click_aim_events, rowing_events, click_times)
-        previous_session = load_previous_session()
 
         print_summary(result, previous_session=previous_session)
 

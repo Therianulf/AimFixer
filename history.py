@@ -119,14 +119,19 @@ def save_session(
     return summary_path
 
 
-def load_previous_session() -> dict | None:
+def load_previous_session(before_current_save: bool = False) -> dict | None:
     sessions = _sessions_dir()
     summaries = sorted(sessions.glob("*_summary.json"))
-    # Need at least 2 (current + previous)
-    if len(summaries) < 2:
-        return None
-    # Second-to-last is the previous session
-    prev_path = summaries[-2]
+    if before_current_save:
+        # Called before saving current session — last file IS the previous session
+        if len(summaries) < 1:
+            return None
+        prev_path = summaries[-1]
+    else:
+        # Called after saving — need at least 2 (current + previous)
+        if len(summaries) < 2:
+            return None
+        prev_path = summaries[-2]
     try:
         return json.loads(prev_path.read_text())
     except (json.JSONDecodeError, OSError):

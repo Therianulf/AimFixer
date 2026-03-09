@@ -9,6 +9,7 @@ from config import (
     MIN_ROWING_GAP_S, MAX_ROWING_GAP_S,
     MIN_ROWING_SWEEPS, MIN_ROWING_SWEEP_VELOCITY,
     MIN_ROWING_SWEEP_DISPLACEMENT,
+    ROWING_CV_THRESHOLD, MAX_ROWING_DISPLACEMENT_RATIO,
     MIN_SWIRL_ANGLE_RAD,
     CLICK_WINDOW_BEFORE_S,
     CLICK_APPROACH_VELOCITY_DROP,
@@ -324,7 +325,11 @@ class OvershootDetector:
         if len(sweeps) < MIN_ROWING_SWEEPS:
             return
 
-        chain: list[Sweep] = [sweeps[0]]
+        # Validate first sweep meets thresholds (previously only checked appended sweeps)
+        first = sweeps[0]
+        first_ok = (first.peak_velocity >= MIN_ROWING_SWEEP_VELOCITY
+                    and abs(first.total_displacement) >= MIN_ROWING_SWEEP_DISPLACEMENT)
+        chain: list[Sweep] = [first] if first_ok else []
 
         for i in range(1, len(sweeps)):
             prev = sweeps[i - 1]
@@ -337,10 +342,15 @@ class OvershootDetector:
             big_enough = abs(curr.total_displacement) >= MIN_ROWING_SWEEP_DISPLACEMENT
 
             if same_dir and gap_ok and fast_enough and big_enough:
-                chain.append(curr)
+                if not chain:
+                    chain = [curr]
+                else:
+                    chain.append(curr)
             else:
                 self._emit_rowing_event(chain)
-                chain = [curr]
+                curr_ok = (curr.peak_velocity >= MIN_ROWING_SWEEP_VELOCITY
+                           and abs(curr.total_displacement) >= MIN_ROWING_SWEEP_DISPLACEMENT)
+                chain = [curr] if curr_ok else []
 
         self._emit_rowing_event(chain)
 
@@ -351,18 +361,23 @@ class OvershootDetector:
         displacements = [abs(s.total_displacement) for s in chain]
         total_disp = sum(displacements)
         max_single = max(displacements)
+        min_single = min(displacements)
+
+        # Magnitude consistency: reject if strokes are wildly inconsistent
+        if min_single > 0 and max_single / min_single > MAX_ROWING_DISPLACEMENT_RATIO:
+            return
+
         gaps = []
         for i in range(1, len(chain)):
             gaps.append(chain[i].start_time - chain[i - 1].end_time)
 
         # Gap consistency check: real rowing has consistent lift timing.
-        # Reject if coefficient of variation > 1.0 (random corrections are erratic).
         if gaps:
             mean_gap = sum(gaps) / len(gaps)
             if mean_gap > 0:
                 std_gap = (sum((g - mean_gap) ** 2 for g in gaps) / len(gaps)) ** 0.5
                 cv = std_gap / mean_gap
-                if cv > 1.0:
+                if cv > ROWING_CV_THRESHOLD:
                     return
 
         self._rowing_events.append(RowingEvent(

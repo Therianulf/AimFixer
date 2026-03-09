@@ -45,13 +45,39 @@ class RowingAxisResult:
 
 
 @dataclass
+class TrendData:
+    prev_hit_factor: float
+    curr_hit_factor: float
+    hit_factor_change_pct: float
+    prev_overshoot_pct: float
+    curr_overshoot_pct: float
+    settings_changed: bool
+
+
+@dataclass
+class UnifiedRecommendation:
+    action: str  # "reduce" | "increase" | "keep" | "multi_step"
+    primary_pct: float = 0.0
+    new_sens: float = 0.0
+    new_dpi: int = 0
+    reasoning: str = ""
+    # Multi-step fields
+    step2_action: str = ""
+    step2_pct: float = 0.0
+    step2_new_sens: float = 0.0
+    step2_new_dpi: int = 0
+    # Trend context
+    trend_note: str = ""
+
+
+@dataclass
 class AnalysisResult:
     session_duration: float
     total_samples: int
     current_dpi: int
     current_sens: float
     click_analysis: ClickAnalysisResult
-    # Overshoot recommendations
+    # Overshoot recommendations (raw, kept for charts/history)
     combined_reduction_pct: float
     new_sens_combined: float
     new_dpi_combined: int
@@ -70,6 +96,9 @@ class AnalysisResult:
     dpi_advisory: str | None = None
     suggested_dpi: int | None = None
     dpi_advisory_level: str = "none"
+    # Unified recommendation
+    recommendation: UnifiedRecommendation | None = None
+    trend: TrendData | None = None
 
 
 def _confidence_weight(n_events: int) -> float:
@@ -212,6 +241,161 @@ def _compute_fire_rate(
     )
 
 
+def _build_trend(
+    current_result_fire_rate: FireRateResult | None,
+    current_overshoot_pct: float,
+    previous_session: dict | None,
+    current_dpi: int,
+    current_sens: float,
+) -> TrendData | None:
+    if previous_session is None:
+        return None
+
+    prev_fr = previous_session.get("fire_rate") or {}
+    prev_hit_factor = prev_fr.get("hit_factor", 0.0)
+    curr_hit_factor = current_result_fire_rate.hit_factor if current_result_fire_rate else 0.0
+
+    prev_ca = previous_session.get("click_analysis", {})
+    prev_overshoot = prev_ca.get("median_overshoot_pct", 0.0)
+
+    prev_settings = previous_session.get("settings", {})
+    prev_dpi = prev_settings.get("dpi", 0)
+    prev_sens = prev_settings.get("sensitivity", 0.0)
+    settings_changed = (prev_dpi != current_dpi or prev_sens != current_sens)
+
+    if prev_hit_factor > 0:
+        hit_factor_change = (curr_hit_factor - prev_hit_factor) / prev_hit_factor * 100.0
+    else:
+        hit_factor_change = 0.0
+
+    return TrendData(
+        prev_hit_factor=prev_hit_factor,
+        curr_hit_factor=curr_hit_factor,
+        hit_factor_change_pct=hit_factor_change,
+        prev_overshoot_pct=prev_overshoot,
+        curr_overshoot_pct=current_overshoot_pct,
+        settings_changed=settings_changed,
+    )
+
+
+def _apply_trend_dampening(raw_pct: float, trend: TrendData | None) -> float:
+    if trend is None:
+        return raw_pct
+    change = trend.hit_factor_change_pct
+    if change > 10.0:
+        return raw_pct * 0.15
+    elif change > 5.0:
+        return raw_pct * 0.50
+    return raw_pct
+
+
+def _resolve_recommendation(
+    combined_reduction: float,
+    combined_increase: float,
+    possibly_too_low: bool,
+    enough_clicks: bool,
+    trend: TrendData | None,
+    current_dpi: int,
+    current_sens: float,
+) -> UnifiedRecommendation:
+    has_overshoot = enough_clicks and combined_reduction > 0.5
+    has_rowing = possibly_too_low and combined_increase > 0.5
+
+    improving = trend is not None and trend.hit_factor_change_pct > 10.0
+
+    # Case 1: Both rowing + overshoot, but performance improving >10%
+    if has_rowing and has_overshoot and improving:
+        return UnifiedRecommendation(
+            action="keep",
+            reasoning="Both overshoot and rowing detected, but your performance is improving.",
+            trend_note=(
+                f"Hit factor improved {trend.hit_factor_change_pct:.0f}% "
+                f"({trend.prev_hit_factor:.2f} -> {trend.curr_hit_factor:.2f}). "
+                "Keep your current settings and keep practicing."
+            ),
+        )
+
+    # Case 2: Both detected, not improving -> multi-step DPI-first approach
+    if has_rowing and has_overshoot:
+        if current_dpi < DPI_SWEET_SPOT_LOW:
+            step1_dpi = _snap_dpi(DPI_SWEET_SPOT_LOW)
+        elif current_dpi > DPI_SWEET_SPOT_HIGH:
+            step1_dpi = _snap_dpi(DPI_SWEET_SPOT_HIGH)
+        else:
+            step1_dpi = _snap_dpi(current_dpi + DPI_STEP * 2)
+
+        dampened_reduction = _apply_trend_dampening(combined_reduction, trend)
+        step2_sens = current_sens * (1 - dampened_reduction / 100.0)
+
+        note = ""
+        if trend and trend.settings_changed:
+            note = (f"Hit factor changed {trend.hit_factor_change_pct:+.0f}% "
+                    f"since last session.")
+
+        return UnifiedRecommendation(
+            action="multi_step",
+            primary_pct=0.0,
+            new_sens=current_sens,
+            new_dpi=step1_dpi,
+            reasoning=(
+                "Both overshoot and rowing detected. "
+                "Try bumping your DPI first, then re-test to calibrate sensitivity."
+            ),
+            step2_action="reduce",
+            step2_pct=dampened_reduction,
+            step2_new_sens=step2_sens,
+            step2_new_dpi=step1_dpi,
+            trend_note=note,
+        )
+
+    # Case 3: Only rowing -> increase
+    if has_rowing:
+        dampened = _apply_trend_dampening(combined_increase, trend)
+        new_sens = current_sens * (1 + dampened / 100.0)
+        new_dpi = _snap_dpi(current_dpi * (1 + dampened / 100.0))
+        note = ""
+        if trend and trend.hit_factor_change_pct > 5.0:
+            note = (f"Hit factor improved {trend.hit_factor_change_pct:.0f}%, "
+                    f"so this recommendation is dampened.")
+        return UnifiedRecommendation(
+            action="increase",
+            primary_pct=dampened,
+            new_sens=new_sens,
+            new_dpi=new_dpi,
+            reasoning="Rowing detected — sensitivity appears too low.",
+            trend_note=note,
+        )
+
+    # Case 4: Only overshoot -> reduce
+    if has_overshoot:
+        dampened = _apply_trend_dampening(combined_reduction, trend)
+        new_sens = current_sens * (1 - dampened / 100.0)
+        new_dpi = _snap_dpi(current_dpi * (1 - dampened / 100.0))
+        note = ""
+        if trend and trend.hit_factor_change_pct > 5.0:
+            note = (f"Hit factor improved {trend.hit_factor_change_pct:.0f}%, "
+                    f"so this recommendation is dampened.")
+        return UnifiedRecommendation(
+            action="reduce",
+            primary_pct=dampened,
+            new_sens=new_sens,
+            new_dpi=new_dpi,
+            reasoning="Overshoot detected on flick shots.",
+            trend_note=note,
+        )
+
+    # Case 5: Neither significant
+    note = ""
+    if trend and trend.hit_factor_change_pct > 5.0:
+        note = (f"Hit factor improved {trend.hit_factor_change_pct:.0f}% "
+                f"— nice progress!")
+    return UnifiedRecommendation(
+        action="keep",
+        reasoning="No significant overshoot or rowing detected.",
+        trend_note=note,
+    )
+
+
 def analyze(
     click_aim_events: list[ClickAimEvent],
     total_clicks: int,
@@ -222,6 +406,7 @@ def analyze(
     rowing_events: list[RowingEvent] | None = None,
     movement_sample_count: int = 0,
     click_times: list[float] | None = None,
+    previous_session: dict | None = None,
 ) -> AnalysisResult:
     # Click-centric analysis
     click_analysis = _compute_click_analysis(click_aim_events, total_clicks)
@@ -249,11 +434,11 @@ def analyze(
     total_rowing = len(rowing_events)
     possibly_too_low = total_rowing >= MIN_ROWING_EVENTS_FOR_RECOMMENDATION
 
-    # Compute new settings (overshoot reduction)
+    # Compute new settings (overshoot reduction — raw, for history)
     new_sens_combined = current_sens * (1 - combined_reduction / 100.0)
     new_dpi_combined = _snap_dpi(current_dpi * (1 - combined_reduction / 100.0))
 
-    # Compute new settings (rowing increase)
+    # Compute new settings (rowing increase — raw, for history)
     new_sens_increase = current_sens * (1 + combined_increase / 100.0)
     new_dpi_increase = _snap_dpi(current_dpi * (1 + combined_increase / 100.0))
 
@@ -266,6 +451,19 @@ def analyze(
 
     # DPI advisory
     dpi_advisory, suggested_dpi, dpi_level = _compute_dpi_advisory(current_dpi)
+
+    # Build trend data from previous session
+    trend = _build_trend(
+        fire_rate, click_analysis.median_overshoot_pct,
+        previous_session, current_dpi, current_sens,
+    )
+
+    # Resolve unified recommendation
+    enough_clicks = click_analysis.analyzed_clicks >= MIN_EVENTS_FOR_RECOMMENDATION
+    recommendation = _resolve_recommendation(
+        combined_reduction, combined_increase, possibly_too_low,
+        enough_clicks, trend, current_dpi, current_sens,
+    )
 
     return AnalysisResult(
         session_duration=session_duration,
@@ -287,4 +485,6 @@ def analyze(
         dpi_advisory=dpi_advisory,
         suggested_dpi=suggested_dpi,
         dpi_advisory_level=dpi_level,
+        recommendation=recommendation,
+        trend=trend,
     )

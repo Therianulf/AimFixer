@@ -1,7 +1,7 @@
 from __future__ import annotations
 import matplotlib.pyplot as plt
 from analyzer import AnalysisResult
-from config import MIN_EVENTS_FOR_RECOMMENDATION, MIN_ROWING_EVENTS_FOR_RECOMMENDATION
+from config import MIN_EVENTS_FOR_RECOMMENDATION
 
 
 def print_summary(result: AnalysisResult, previous_session: dict | None = None):
@@ -55,8 +55,9 @@ def print_summary(result: AnalysisResult, previous_session: dict | None = None):
     print()
     print("-" * 50)
 
+    rec = result.recommendation
     enough = ca.analyzed_clicks >= MIN_EVENTS_FOR_RECOMMENDATION
-    if not enough and not result.possibly_too_low:
+    if rec is None and not enough and not result.possibly_too_low:
         print("  Not enough aim events for a reliable")
         print("  recommendation. Try a longer session with")
         print("  more flick shots.")
@@ -66,22 +67,32 @@ def print_summary(result: AnalysisResult, previous_session: dict | None = None):
     print("  RECOMMENDATION")
     print("-" * 50)
 
-    if result.possibly_too_low and result.combined_increase_pct > 0.5:
-        print(f"  Sensitivity too LOW - rowing detected!")
-        print(f"  Increase in-game sensitivity by ~{result.combined_increase_pct:.0f}%")
-        print(f"    {result.current_sens} -> {result.new_sens_increase:.2f}")
-        print()
-    elif result.possibly_too_low:
-        print("  NOTE: Rowing detected. Your sensitivity might")
-        print("  be too LOW. Consider increasing by 5-10%.")
-        print()
+    if rec:
+        if rec.action == "keep":
+            print("  Your sensitivity looks well-tuned!")
+            if rec.reasoning:
+                print(f"  {rec.reasoning}")
+        elif rec.action == "reduce":
+            print(f"  Reduce in-game sensitivity by ~{rec.primary_pct:.0f}%")
+            print(f"    {result.current_sens} -> {rec.new_sens:.2f}")
+        elif rec.action == "increase":
+            print(f"  Increase in-game sensitivity by ~{rec.primary_pct:.0f}%")
+            print(f"    {result.current_sens} -> {rec.new_sens:.2f}")
+        elif rec.action == "multi_step":
+            print("  Two-step adjustment recommended:")
+            print(f"    Step 1: Bump DPI from {result.current_dpi} to {rec.new_dpi}")
+            print(f"            Try this and run the test again.")
+            if rec.step2_pct > 0.5:
+                print(f"    Step 2: If overshoot persists, reduce sens by ~{rec.step2_pct:.0f}%")
+                print(f"            {result.current_sens} -> {rec.step2_new_sens:.2f}")
 
-    if result.combined_reduction_pct > 0.5:
-        print(f"  Reduce in-game sensitivity by ~{result.combined_reduction_pct:.0f}%")
-        print(f"    {result.current_sens} -> {result.new_sens_combined:.2f}")
-    elif not result.possibly_too_low:
-        print("  Your sensitivity looks well-tuned!")
-        print("  No significant overshoot detected.")
+        if rec.trend_note:
+            print()
+            print(f"  {rec.trend_note}")
+    else:
+        print("  Not enough aim events for a reliable")
+        print("  recommendation. Try a longer session with")
+        print("  more flick shots.")
 
     # DPI advisory (tiered)
     if result.dpi_advisory:

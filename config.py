@@ -28,8 +28,10 @@ TOGGLE_KEY = keyboard.Key.f6
 MIN_ROWING_GAP_S = 0.050           # Min gap to count as mouse lift (50ms = realistic lift minimum)
 MAX_ROWING_GAP_S = 0.500           # Max gap before it's a deliberate pause (500ms)
 MIN_ROWING_SWEEPS = 3              # Min consecutive same-dir sweeps for rowing
-MIN_ROWING_SWEEP_VELOCITY = 200.0  # Filter out slow corrections that aren't rowing
-MIN_ROWING_SWEEP_DISPLACEMENT = 10.0  # Rowing covers real distance, not micro-adjustments
+MIN_ROWING_SWEEP_VELOCITY = 450.0  # Normal corrections are 100-300 px/s; only flag real rowing
+MIN_ROWING_SWEEP_DISPLACEMENT = 25.0  # 10px is micro-adjustment noise; rowing covers real distance
+ROWING_CV_THRESHOLD = 0.5            # Coefficient of variation — was 1.0 (too lenient)
+MAX_ROWING_DISPLACEMENT_RATIO = 4.0  # Reject chains with wildly inconsistent stroke sizes
 ROWING_CORRECTION_FACTOR = 0.50    # Conservative increase recommendation
 MIN_ROWING_EVENTS_FOR_RECOMMENDATION = 8
 
