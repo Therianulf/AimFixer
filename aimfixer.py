@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """AimFixer - Mouse overshoot detection and sensitivity advisor for FPS games."""
 
+import logging
 import sys
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 
 def main():

@@ -1,8 +1,11 @@
 """AppController — manages multi-session lifecycle with overlay + collector."""
 from __future__ import annotations
 
+import logging
 import sys
 import threading
+
+log = logging.getLogger(__name__)
 
 from collector import MouseCollector
 from dialogs import show_startup_dialog, show_settings_change_dialog
@@ -30,19 +33,43 @@ class AppController:
 
     def run(self):
         """Main entry point. Blocks until quit."""
+        log.debug("AppController.run() starting")
+
         # If no settings provided, show GUI startup dialog
         if self.dpi == 0 or self.h_sens == 0.0:
-            result = show_startup_dialog()
+            log.debug("No settings provided, showing startup dialog")
+            try:
+                result = show_startup_dialog()
+                log.debug("Startup dialog returned: %s", result)
+            except Exception:
+                log.exception("Startup dialog raised an exception")
+                return
             if result is None:
+                log.debug("User cancelled startup dialog")
                 return  # User cancelled
             self.dpi, self.h_sens, self.v_sens = result
 
-        if sys.platform == "darwin":
-            self._overlay = OverlayController.alloc().init()
-        else:
-            self._overlay = OverlayController()
-        self._overlay.set_settings(self.dpi, self.h_sens, self.v_sens)
+        log.debug("Settings: dpi=%d h_sens=%s v_sens=%s", self.dpi, self.h_sens, self.v_sens)
 
+        log.debug("Creating OverlayController (platform=%s)", sys.platform)
+        try:
+            if sys.platform == "darwin":
+                self._overlay = OverlayController.alloc().init()
+            else:
+                self._overlay = OverlayController()
+            log.debug("OverlayController created: %s", self._overlay)
+        except Exception:
+            log.exception("Failed to create OverlayController")
+            return
+
+        try:
+            self._overlay.set_settings(self.dpi, self.h_sens, self.v_sens)
+            log.debug("Overlay settings applied")
+        except Exception:
+            log.exception("Failed to set overlay settings")
+            return
+
+        log.debug("Creating MouseCollector")
         self._collector = MouseCollector(
             on_state_change=self._on_state_change,
             on_movement_key=self._on_movement_key,
@@ -50,22 +77,43 @@ class AppController:
             on_quit=self._on_quit,
             on_settings=self._on_settings,
         )
-        self._collector.start_listeners()
-        self._start_session()
+
+        # Schedule listener + session startup for after the run loop is active.
+        # On macOS, Quartz CGEventTap threads crash (SIGTRAP) if NSAlert.runModal()
+        # was called before NSApp.run() starts.  Deferring via schedule() ensures
+        # the run loop is live when the Quartz threads spin up.
+        log.debug("Scheduling listener startup via overlay.schedule()")
+        self._overlay.schedule(self._boot_listeners)
 
         # Main thread runs overlay event loop (blocks until quit)
-        self._overlay.run()
+        log.debug("Entering overlay run loop")
+        try:
+            self._overlay.run()
+        except Exception:
+            log.exception("Overlay run loop raised an exception")
+
+        log.debug("Overlay run loop exited")
 
         # Cleanup
         self._collector.stop_listeners()
+        log.debug("Collector listeners stopped")
 
         # Show final charts after overlay exits (on main thread)
         if self._pending_charts:
+            log.debug("Showing final charts")
             result, events, rowing = self._pending_charts[-1]
             show_charts(result, events, rowing)
 
+    def _boot_listeners(self):
+        """Called on main thread once the overlay run loop is active."""
+        log.debug("_boot_listeners: starting listeners")
+        self._collector.start_listeners()
+        log.debug("_boot_listeners: listeners started, launching first session")
+        self._start_session()
+
     def _start_session(self):
         """Prepare and launch a new session on a background thread."""
+        log.debug("Starting session %d", self._session_count + 1)
         self._collector.reset()
         self._overlay.set_state(OverlayState.WAITING)
         self._session_count += 1
@@ -79,9 +127,11 @@ class AppController:
             on_error=self._on_session_error,
         )
         threading.Thread(target=runner.run, daemon=True).start()
+        log.debug("Session %d thread launched", self._session_count)
 
     def _on_session_complete(self, result, click_aim_events, rowing_events):
         """Called from worker thread when analysis finishes."""
+        log.debug("Session complete callback")
         self._pending_charts.append((result, click_aim_events, rowing_events))
         self._overlay.set_state(OverlayState.DONE)
         # Auto-start next session listener (user presses F5 to record again)
@@ -89,12 +139,14 @@ class AppController:
 
     def _on_session_error(self, msg):
         """Called from worker thread on error."""
+        log.error("Session error: %s", msg)
         print(f"\n  {msg}")
         self._overlay.set_state(OverlayState.DONE)
         # Allow retry
         self._start_session()
 
     def _on_state_change(self, state: str):
+        log.debug("State change: %s", state)
         if state == "recording":
             self._overlay.set_state(OverlayState.RECORDING)
         elif state == "stopped":

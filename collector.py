@@ -1,9 +1,12 @@
 from __future__ import annotations
+import logging
 import sys
 import time
 import threading
 from dataclasses import dataclass
 from pynput import mouse, keyboard
+
+log = logging.getLogger(__name__)
 from config import (
     START_KEY, STOP_KEY, QUIT_KEY, SETTINGS_KEY, WARP_THRESHOLD_PX,
     MOVEMENT_KEYS_SPECIAL, MOVEMENT_KEYS_CHAR, MOVEMENT_DEBOUNCE_S,
@@ -112,7 +115,9 @@ class MouseCollector:
 
     def _delta_macos(self):
         """macOS: Quartz CGEvent tap for true mouse deltas."""
+        log.debug("_delta_macos: importing Quartz")
         import Quartz
+        log.debug("_delta_macos: Quartz imported")
 
         def callback(proxy, event_type, event, refcon):
             if event_type == Quartz.kCGEventLeftMouseDown:
@@ -133,6 +138,7 @@ class MouseCollector:
             | Quartz.CGEventMaskBit(Quartz.kCGEventRightMouseDragged)
             | Quartz.CGEventMaskBit(Quartz.kCGEventOtherMouseDragged)
         )
+        log.debug("_delta_macos: creating event tap")
         tap = Quartz.CGEventTapCreate(
             Quartz.kCGSessionEventTap,
             Quartz.kCGHeadInsertEventTap,
@@ -142,15 +148,17 @@ class MouseCollector:
             None,
         )
         if tap is None:
-            print("  WARNING: Could not create event tap.")
-            print("  Grant Accessibility access to your terminal.")
+            log.warning("Could not create event tap — grant Accessibility access")
             return
 
+        log.debug("_delta_macos: event tap created, setting up run loop source")
         source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
         self._quartz_loop = Quartz.CFRunLoopGetCurrent()
         Quartz.CFRunLoopAddSource(
             self._quartz_loop, source, Quartz.kCFRunLoopDefaultMode)
+        log.debug("_delta_macos: enabling event tap")
         Quartz.CGEventTapEnable(tap, True)
+        log.debug("_delta_macos: entering run loop")
 
         while self._delta_running:
             Quartz.CFRunLoopRunInMode(
@@ -365,6 +373,7 @@ class MouseCollector:
 
     def start_listeners(self):
         """Start listeners and platform-specific delta capture. Call once at app startup."""
+        log.debug("start_listeners: creating pynput listeners")
         on_move = self._on_move_fallback if sys.platform == 'linux' else None
         on_click = None if sys.platform == 'darwin' else self._on_click
         self._mouse_listener = mouse.Listener(
@@ -373,9 +382,13 @@ class MouseCollector:
             on_press=self._on_key_press,
             on_release=self._on_key_release,
         )
+        log.debug("start_listeners: starting mouse listener")
         self._mouse_listener.start()
+        log.debug("start_listeners: starting keyboard listener")
         self._key_listener.start()
+        log.debug("start_listeners: starting delta capture")
         self._start_delta_capture()
+        log.debug("start_listeners: done")
 
     def stop_listeners(self):
         """Stop all listeners. Call once at app shutdown."""
