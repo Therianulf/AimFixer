@@ -1,5 +1,4 @@
 from __future__ import annotations
-from dataclasses import dataclass
 from statistics import median, mean
 from detector import ClickAimEvent, RowingEvent
 from config import (
@@ -9,115 +8,17 @@ from config import (
     DPI_SWEET_SPOT_LOW, DPI_SWEET_SPOT_HIGH, DPI_HARD_LOW, DPI_HARD_HIGH,
     STRING_GAP_THRESHOLD_S, snap_sens,
 )
+from models import (
+    ClickAnalysisResult, FireRateResult, RowingAxisResult,
+    TrendData, UnifiedRecommendation, AnalysisResult,
+)
 
 
-@dataclass
-class ClickAnalysisResult:
-    total_clicks: int
-    analyzed_clicks: int              # clicks with a detected flick
-    swirl_click_count: int            # clicks with angle_rotation > threshold
-    swirl_click_pct: float
-    median_overshoot_pct: float
-    mean_overshoot_pct: float
-    median_correction_magnitude: float
-    median_correction_duration_ms: float
-    median_direction_changes: float
-    recommended_reduction_pct: float
-    overshoot_percentages: list[float]
-
-
-@dataclass
-class FireRateResult:
-    total_shots: int
-    shots_per_minute: float
-    median_shot_interval_ms: float
-    mean_shot_interval_ms: float
-    aim_efficiency: float          # 0-1, higher = less overshoot
-    hit_factor: float              # (shots_per_minute / 60) * aim_efficiency
-    string_count: int = 0
-    active_combat_duration_s: float = 0.0
-    shots_per_string_avg: float = 0.0
-
-
-@dataclass
-class RowingAxisResult:
-    rowing_event_count: int
-    median_chain_length: float
-    median_increase_ratio: float
-    mean_gap_duration_ms: float
-    recommended_increase_pct: float
-
-
-@dataclass
-class TrendData:
-    prev_hit_factor: float
-    curr_hit_factor: float
-    hit_factor_change_pct: float
-    prev_overshoot_pct: float
-    curr_overshoot_pct: float
-    settings_changed: bool
-
-
-@dataclass
-class UnifiedRecommendation:
-    action: str  # "reduce" | "increase" | "keep" | "multi_step"
-    primary_pct: float = 0.0
-    new_sens: float = 0.0
-    new_dpi: int = 0
-    reasoning: str = ""
-    new_v_sens: float = 0.0
-    # Multi-step fields
-    step2_action: str = ""
-    step2_pct: float = 0.0
-    step2_new_sens: float = 0.0
-    step2_new_dpi: int = 0
-    step2_new_v_sens: float = 0.0
-    # Trend context
-    trend_note: str = ""
-
-
-@dataclass
-class AnalysisResult:
-    session_duration: float
-    total_samples: int
-    current_dpi: int
-    current_sens: float
-    click_analysis: ClickAnalysisResult
-    # Overshoot recommendations (raw, kept for charts/history)
-    combined_reduction_pct: float
-    new_sens_combined: float
-    new_dpi_combined: int
-    # Rowing
-    possibly_too_low: bool
-    x_rowing: RowingAxisResult | None = None
-    y_rowing: RowingAxisResult | None = None
-    combined_increase_pct: float = 0.0
-    new_sens_increase: float = 0.0
-    new_dpi_increase: int = 0
-    # Fire rate / hit factor
-    fire_rate: FireRateResult | None = None
-    # Contamination
-    movement_contamination_pct: float = 0.0
-    # DPI advisory
-    dpi_advisory: str | None = None
-    suggested_dpi: int | None = None
-    dpi_advisory_level: str = "none"
-    # Unified recommendation
-    recommendation: UnifiedRecommendation | None = None
-    trend: TrendData | None = None
-    # Vertical sensitivity
-    current_v_sens: float = 0.0
-    new_v_sens_combined: float = 0.0
-    new_v_sens_increase: float = 0.0
-    # Game tagging
-    current_game: str = "unknown"
-
-
-def _confidence_weight(n_events: int) -> float:
+def confidence_weight(n_events: int) -> float:
     return min(1.0, 0.5 + 0.5 * (n_events / 50))
 
 
-def _snap_dpi(dpi: float) -> int:
+def snap_dpi(dpi: float) -> int:
     return max(DPI_STEP, round(dpi / DPI_STEP) * DPI_STEP)
 
 
@@ -126,14 +27,14 @@ def _compute_dpi_advisory(current_dpi: int) -> tuple[str | None, int | None, str
         return (
             f"Your DPI ({current_dpi}) is very low. Pixel skipping is likely."
             f" Strongly consider raising to {DPI_SWEET_SPOT_LOW}.",
-            _snap_dpi(DPI_SWEET_SPOT_LOW),
+            snap_dpi(DPI_SWEET_SPOT_LOW),
             "warning",
         )
     elif current_dpi < DPI_SWEET_SPOT_LOW:
         return (
             f"Your DPI ({current_dpi}) is a bit low."
             f" Consider raising to {DPI_SWEET_SPOT_LOW} for smoother tracking.",
-            _snap_dpi(DPI_SWEET_SPOT_LOW),
+            snap_dpi(DPI_SWEET_SPOT_LOW),
             "info",
         )
     elif current_dpi > DPI_HARD_HIGH:
@@ -141,7 +42,7 @@ def _compute_dpi_advisory(current_dpi: int) -> tuple[str | None, int | None, str
             f"Your DPI ({current_dpi}) is very high."
             f" Sensor smoothing may reduce precision."
             f" Consider lowering to {DPI_SWEET_SPOT_HIGH}.",
-            _snap_dpi(DPI_SWEET_SPOT_HIGH),
+            snap_dpi(DPI_SWEET_SPOT_HIGH),
             "warning",
         )
     elif current_dpi > DPI_SWEET_SPOT_HIGH:
@@ -150,7 +51,7 @@ def _compute_dpi_advisory(current_dpi: int) -> tuple[str | None, int | None, str
             f" {DPI_SWEET_SPOT_LOW}-{DPI_SWEET_SPOT_HIGH} range."
             f" This is usually fine on modern sensors,"
             f" but consider lowering to {DPI_SWEET_SPOT_HIGH}.",
-            _snap_dpi(DPI_SWEET_SPOT_HIGH),
+            snap_dpi(DPI_SWEET_SPOT_HIGH),
             "info",
         )
     return None, None, "none"
@@ -185,7 +86,7 @@ def _compute_click_analysis(
 
     med_pct = median(pcts)
     reduction = min(
-        med_pct * CORRECTION_FACTOR * _confidence_weight(n),
+        med_pct * CORRECTION_FACTOR * confidence_weight(n),
         MAX_REDUCTION_PCT,
     )
 
@@ -213,7 +114,7 @@ def _compute_rowing_axis(events: list[RowingEvent]) -> RowingAxisResult | None:
     gap_durations = [e.mean_gap_duration * 1000 for e in events]
 
     med_ratio = median(increase_ratios)
-    increase_pct = (med_ratio - 1.0) * 100 * ROWING_CORRECTION_FACTOR * _confidence_weight(n)
+    increase_pct = (med_ratio - 1.0) * 100 * ROWING_CORRECTION_FACTOR * confidence_weight(n)
 
     return RowingAxisResult(
         rowing_event_count=n,
@@ -383,11 +284,11 @@ def _resolve_recommendation(
     # Case 2: Both detected, not improving -> multi-step DPI-first approach
     if has_rowing and has_overshoot:
         if current_dpi < DPI_SWEET_SPOT_LOW:
-            step1_dpi = _snap_dpi(DPI_SWEET_SPOT_LOW)
+            step1_dpi = snap_dpi(DPI_SWEET_SPOT_LOW)
         elif current_dpi > DPI_SWEET_SPOT_HIGH:
-            step1_dpi = _snap_dpi(DPI_SWEET_SPOT_HIGH)
+            step1_dpi = snap_dpi(DPI_SWEET_SPOT_HIGH)
         else:
-            step1_dpi = _snap_dpi(current_dpi + DPI_STEP * 2)
+            step1_dpi = snap_dpi(current_dpi + DPI_STEP * 2)
 
         dampened_reduction = _apply_trend_dampening(combined_reduction, trend)
         step2_sens = snap_sens(current_sens * (1 - dampened_reduction / 100.0), game)
@@ -421,7 +322,7 @@ def _resolve_recommendation(
         dampened = _apply_trend_dampening(combined_increase, trend)
         new_sens = snap_sens(current_sens * (1 + dampened / 100.0), game)
         new_v_sens = snap_sens(current_v_sens * (1 + dampened / 100.0), game)
-        new_dpi = _snap_dpi(current_dpi * (1 + dampened / 100.0))
+        new_dpi = snap_dpi(current_dpi * (1 + dampened / 100.0))
         note = ""
         if trend and trend.hit_factor_change_pct > 5.0:
             note = (f"Hit factor improved {trend.hit_factor_change_pct:.0f}%, "
@@ -441,7 +342,7 @@ def _resolve_recommendation(
         dampened = _apply_trend_dampening(combined_reduction, trend)
         new_sens = snap_sens(current_sens * (1 - dampened / 100.0), game)
         new_v_sens = snap_sens(current_v_sens * (1 - dampened / 100.0), game)
-        new_dpi = _snap_dpi(current_dpi * (1 - dampened / 100.0))
+        new_dpi = snap_dpi(current_dpi * (1 - dampened / 100.0))
         note = ""
         if trend and trend.hit_factor_change_pct > 5.0:
             note = (f"Hit factor improved {trend.hit_factor_change_pct:.0f}%, "
@@ -514,12 +415,12 @@ def analyze(
     # Compute new settings (overshoot reduction — raw, for history)
     new_sens_combined = snap_sens(current_sens * (1 - combined_reduction / 100.0), current_game)
     new_v_sens_combined = snap_sens(current_v_sens * (1 - combined_reduction / 100.0), current_game)
-    new_dpi_combined = _snap_dpi(current_dpi * (1 - combined_reduction / 100.0))
+    new_dpi_combined = snap_dpi(current_dpi * (1 - combined_reduction / 100.0))
 
     # Compute new settings (rowing increase — raw, for history)
     new_sens_increase = snap_sens(current_sens * (1 + combined_increase / 100.0), current_game)
     new_v_sens_increase = snap_sens(current_v_sens * (1 + combined_increase / 100.0), current_game)
-    new_dpi_increase = _snap_dpi(current_dpi * (1 + combined_increase / 100.0))
+    new_dpi_increase = snap_dpi(current_dpi * (1 + combined_increase / 100.0))
 
     # Fire rate / hit factor
     fire_rate = None

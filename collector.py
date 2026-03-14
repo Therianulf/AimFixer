@@ -5,7 +5,7 @@ import threading
 from dataclasses import dataclass
 from pynput import mouse, keyboard
 from config import (
-    START_KEY, STOP_KEY, WARP_THRESHOLD_PX,
+    START_KEY, STOP_KEY, QUIT_KEY, SETTINGS_KEY, WARP_THRESHOLD_PX,
     MOVEMENT_KEYS_SPECIAL, MOVEMENT_KEYS_CHAR, MOVEMENT_DEBOUNCE_S,
     GAME_CYCLE_KEY, GAME_LIST, GAME_DISPLAY_NAMES,
 )
@@ -22,7 +22,8 @@ class MouseSample:
 
 
 class MouseCollector:
-    def __init__(self, on_state_change=None, on_movement_key=None, on_game_change=None):
+    def __init__(self, on_state_change=None, on_movement_key=None,
+                 on_game_change=None, on_quit=None, on_settings=None):
         self._samples: list[MouseSample] = []
         self._click_times: list[float] = []
         self._collecting = False
@@ -33,6 +34,8 @@ class MouseCollector:
         self._on_state_change = on_state_change
         self._on_movement_key = on_movement_key
         self._on_game_change = on_game_change
+        self._on_quit = on_quit
+        self._on_settings = on_settings
         self._movement_held = False
         self._movement_keys_down: set = set()
         self._last_movement_warn = 0.0
@@ -302,6 +305,16 @@ class MouseCollector:
         return False
 
     def _on_key_press(self, key):
+        if key == QUIT_KEY and not self._collecting:
+            if self._on_quit:
+                self._on_quit()
+            return
+
+        if key == SETTINGS_KEY and not self._collecting:
+            if self._on_settings:
+                self._on_settings()
+            return
+
         if key == GAME_CYCLE_KEY and not self._collecting:
             self._game_index = (self._game_index + 1) % len(GAME_LIST)
             self._current_game = GAME_LIST[self._game_index]
@@ -347,9 +360,11 @@ class MouseCollector:
     # --- Public API ---
 
     def start(self):
-        """Start listeners and platform-specific delta capture."""
-        # Use on_move only on Linux as fallback
-        # On macOS, clicks are captured via Quartz event tap instead of pynput
+        """Start listeners and platform-specific delta capture (legacy single-session)."""
+        self.start_listeners()
+
+    def start_listeners(self):
+        """Start listeners and platform-specific delta capture. Call once at app startup."""
         on_move = self._on_move_fallback if sys.platform == 'linux' else None
         on_click = None if sys.platform == 'darwin' else self._on_click
         self._mouse_listener = mouse.Listener(
@@ -360,9 +375,32 @@ class MouseCollector:
         )
         self._mouse_listener.start()
         self._key_listener.start()
-
-        # Start platform-specific raw delta capture (macOS / Windows)
         self._start_delta_capture()
+
+    def stop_listeners(self):
+        """Stop all listeners. Call once at app shutdown."""
+        self._stop_delta_capture()
+        if self._mouse_listener:
+            self._mouse_listener.stop()
+        if self._key_listener:
+            self._key_listener.stop()
+
+    def reset(self):
+        """Reset collector state for a new recording session.
+
+        Call after a session completes to prepare for another start/stop cycle.
+        Listeners remain active; only recording state and data buffers are cleared.
+        """
+        self._samples.clear()
+        self._click_times.clear()
+        self._collecting = False
+        self._done.clear()
+        self._started.clear()
+        self._movement_keys_down.clear()
+        self._movement_held = False
+        self._last_movement_warn = 0.0
+        self._prev_x = None
+        self._prev_y = None
 
     def wait_for_start(self):
         self._started.wait()
@@ -371,11 +409,8 @@ class MouseCollector:
         self._done.wait()
 
     def stop(self):
-        self._stop_delta_capture()
-        if self._mouse_listener:
-            self._mouse_listener.stop()
-        if self._key_listener:
-            self._key_listener.stop()
+        """Stop all listeners (legacy single-session)."""
+        self.stop_listeners()
 
     def get_samples(self) -> list[MouseSample]:
         return list(self._samples)

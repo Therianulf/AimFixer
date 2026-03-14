@@ -2,26 +2,35 @@
 
 ## Project Overview
 
-AimFixer is a Python-based mouse overshoot detection and sensitivity advisor for FPS games. It records real-time mouse input, detects overshoot patterns using biomechanical heuristics, and recommends optimal sensitivity/DPI adjustments.
+AimFixer is a Python-based mouse overshoot detection and sensitivity advisor for FPS games. It records real-time mouse input, detects overshoot patterns using biomechanical heuristics, and recommends optimal sensitivity/DPI adjustments. Supports multiple consecutive recording sessions without restarting.
 
 ## Tech Stack
 
 - **Language:** Python 3.9+
 - **Input Capture:** pynput (mouse + keyboard listeners)
 - **Visualization:** matplotlib
-- **Platform:** macOS (requires accessibility permissions), also supports Linux/Windows
+- **Overlay:** AppKit (macOS native OSD), tkinter (Windows/Linux)
+- **GUI Dialogs:** tkinter (cross-platform startup + settings dialogs)
+- **Platform:** macOS (requires accessibility permissions), Windows, Linux
 
 ## Project Structure
 
 ```
-aimfixer.py    - Main entry point, orchestrates the pipeline
-collector.py   - MouseCollector: records mouse movement via F6 hotkey toggle
-detector.py    - OvershootDetector: 3-stage detection (EMA filter → sweep segmentation → overshoot classification)
+aimfixer.py    - Main entry point, CLI arg parsing
+app.py         - AppController: multi-session lifecycle (overlay + collector + session loop)
+session.py     - SessionRunner: collect → detect → analyze → save pipeline
+collector.py   - MouseCollector: records mouse movement, supports reset() for multi-session
+detector.py    - OvershootDetector: 4-stage detection (EMA filter → sweep segmentation → click-aim → rowing)
 analyzer.py    - Statistical analysis + sensitivity reduction recommendations
+models.py      - Shared dataclass definitions (AnalysisResult, OverlayState, etc.)
+dialogs.py     - Cross-platform tkinter dialogs (startup settings, mid-session settings change)
 visualizer.py  - Terminal summary + 6-panel matplotlib charts
+overlay.py     - macOS native OSD (AppKit NSWindow), states: WAITING/RECORDING/ANALYZING/DONE
+overlay_win.py - Windows/Linux OSD (tkinter Toplevel), mirrors overlay.py API
 compare.py     - Multi-session history comparison and aggregate recommendations
 history.py     - Session persistence (save/load JSON summaries + JSONL events)
-config.py      - All tunable constants (thresholds, weights, hotkey)
+config.py      - Configuration loader from config.ini
+config.ini     - All tunable constants (thresholds, weights, hotkeys)
 pyproject.toml - Project metadata and dependencies
 ```
 
@@ -45,12 +54,22 @@ python aimfixer.py <dpi> <h_sensitivity> <v_sensitivity>
 python aimfixer.py history
 ```
 
+## Hotkeys
+
+- **F5** — Start recording
+- **F6** — Stop recording
+- **F7** — Cycle through games (Apex Legends, R6 Siege, Rust, Arc Raiders, Deadlock)
+- **F8** — Quit app and show charts
+- **F9** — Change settings (DPI/sensitivity) via dialog
+
 ## Architecture / Data Flow
 
 ```
 User Input (DPI + H/V Sensitivity)
     ↓
-MouseCollector → Raw samples (timestamp, x, y, dx, dy)
+AppController (multi-session loop)
+    ↓
+SessionRunner → MouseCollector → Raw samples (timestamp, x, y, dx, dy)
     ↓
 OvershootDetector → EMA smoothing → Sweep segmentation → Overshoot events
     ↓
@@ -58,6 +77,16 @@ Analyzer → Statistics (median, mean, p75) + sensitivity recommendation
     ↓
 Visualizer → Text summary + charts (histograms, scatter, time series)
 ```
+
+## Multi-Session Flow
+
+1. User enters settings (DPI, sensitivity) at startup
+2. Overlay shows WAITING state with tips and current settings
+3. F5 starts recording → RECORDING state
+4. F6 stops recording → ANALYZING state → analysis runs → DONE state
+5. From DONE: F5 starts a new session (loop back to step 3), F8 quits
+6. Each session creates independent data in `sessions/`
+7. On quit, final charts display on main thread
 
 ## Key Algorithm Details
 
@@ -82,8 +111,8 @@ Visualizer → Text summary + charts (histograms, scatter, time series)
 ## Development Notes
 
 - No tests currently exist
-- All config constants live in `config.py` — change thresholds there
-- F5 starts recording, F6 stops recording (defined via `START_KEY`/`STOP_KEY` in config.py)
+- All config constants live in `config.ini`, loaded by `config.py`
+- Hotkeys defined in config.ini under `[hotkeys]`
 - DPI recommendations snap to nearest 50 (`DPI_STEP`)
 - Confidence weighting scales down recommendations when sample count is low
 - Sessions are saved as JSON summaries + JSONL event logs in `sessions/`
@@ -91,11 +120,16 @@ Visualizer → Text summary + charts (histograms, scatter, time series)
 - Per-game split H/V sensitivity support — games like R6 Siege have separate horizontal/vertical sliders
 - `GAME_SPLIT_SENS` in config.py marks which games natively support split sens (informational)
 - When V sens differs from H sens, recommendations show separate H/V values using the same percentage adjustment
-- Interactive prompt always asks for V sens (Enter defaults to same as H); CLI supports `<dpi> <h_sens> <v_sens>`
+- CLI supports `<dpi> <h_sens> <v_sens>`; no-args launches tkinter startup dialog
 - Old sessions without `v_sensitivity` fall back to `sensitivity` (backward compatible)
+- `OverlayState` enum lives in `models.py` (shared by both overlay modules)
+- `app.py` imports overlay controller based on `sys.platform` (macOS → `overlay.py`, else → `overlay_win.py`)
+- Startup and settings dialogs use `dialogs.py` (tkinter, cross-platform) — `overlay.py` no longer contains dialog code
+- `overlay_win.py` mirrors `overlay.py` API: `set_state()`, `set_game()`, `flash_warning()`, `set_settings()`, `schedule()`, `run()`, `stop()`
 
 ## Code Navigation Preferences
 
-- **Prefer LSP tools first** for navigating and understanding code (goToDefinition, findReferences, documentSymbol, hover, etc.). LSP provides accurate, type-aware results.
-- **Fall back to Grep/Glob** if the LSP server is unavailable, still starting, or returns an error.
+- **Always use LSP tools first** for navigating and understanding code (goToDefinition, findReferences, documentSymbol, hover, etc.). LSP provides accurate, type-aware results.
+- **Fall back to Grep/Glob** only if the LSP server is unavailable, still starting, or returns an error.
 - Navigation priority: LSP → Grep → Glob → Agent (Explore)
+- Use LSP whenever possible — this is a strong preference.

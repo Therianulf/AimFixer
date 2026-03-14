@@ -13,6 +13,7 @@ from config import (
     MIN_SWIRL_ANGLE_RAD,
     CLICK_WINDOW_BEFORE_S,
     CLICK_APPROACH_VELOCITY_DROP,
+    SETTLE_SPEED_PX_S,
 )
 
 
@@ -89,9 +90,6 @@ class OvershootDetector:
         self._classify_click_aims()
         self._classify_rowing()
         return self._click_aim_events
-
-    def get_all_sweeps(self) -> dict[str, list[Sweep]]:
-        return {"x": self._sweeps_x, "y": self._sweeps_y}
 
     def get_click_aim_events(self) -> list[ClickAimEvent]:
         return self._click_aim_events
@@ -204,7 +202,6 @@ class OvershootDetector:
         n = len(self._samples)
 
         # Absolute speed threshold: below this = "settled / correcting"
-        SETTLE_SPEED = 500.0  # px/s — typical fine-correction speed
 
         for click_t in self._click_times:
             before_start_t = click_t - CLICK_WINDOW_BEFORE_S
@@ -247,7 +244,7 @@ class OvershootDetector:
             transition_index = i_click  # default: no correction phase
 
             for idx, spd in speeds:
-                if idx > peak_index and spd <= relative_threshold and spd <= SETTLE_SPEED:
+                if idx > peak_index and spd <= relative_threshold and spd <= SETTLE_SPEED_PX_S:
                     transition_index = idx
                     break
 

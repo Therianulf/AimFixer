@@ -39,6 +39,7 @@ MIN_SWEEP_PIXELS = _float("sweep", "min_sweep_pixels")
 MIN_FLICK_VELOCITY_PX_S = _float("click_detection", "min_flick_velocity_px_s")
 CLICK_WINDOW_BEFORE_S = _float("click_detection", "click_window_before_s")
 CLICK_APPROACH_VELOCITY_DROP = _float("click_detection", "click_approach_velocity_drop")
+SETTLE_SPEED_PX_S = _float("click_detection", "settle_speed_px_s")
 
 # ---------------------------------------------------------------------------
 # Sensitivity recommendation
@@ -60,6 +61,8 @@ WARP_THRESHOLD_PX = _int("warp", "warp_threshold_px")
 START_KEY = getattr(keyboard.Key, _ini.get("hotkeys", "start_key"))
 STOP_KEY = getattr(keyboard.Key, _ini.get("hotkeys", "stop_key"))
 GAME_CYCLE_KEY = getattr(keyboard.Key, _ini.get("hotkeys", "game_cycle_key"))
+QUIT_KEY = getattr(keyboard.Key, _ini.get("hotkeys", "quit_key"))
+SETTINGS_KEY = getattr(keyboard.Key, _ini.get("hotkeys", "settings_key"))
 
 # ---------------------------------------------------------------------------
 # Game tagging

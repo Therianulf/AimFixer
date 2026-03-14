@@ -1,6 +1,8 @@
 from __future__ import annotations
+import sys
 import matplotlib
-matplotlib.use("macosx")
+if sys.platform == "darwin":
+    matplotlib.use("macosx")
 import matplotlib.pyplot as plt
 from analyzer import AnalysisResult, group_shot_strings
 from config import MIN_EVENTS_FOR_RECOMMENDATION, format_sens
@@ -218,7 +220,8 @@ def _get_intra_string_intervals(click_aim_events) -> list[float]:
     return intervals_ms
 
 
-def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
+def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None,
+                blocking=True):
     if rowing_events is None:
         rowing_events = []
 
@@ -347,4 +350,4 @@ def show_charts(result: AnalysisResult, click_aim_events, rowing_events=None):
 
     fig.tight_layout()
     fig.canvas.manager.set_window_title("AimFixer Analysis")
-    plt.show()
+    plt.show(block=blocking)

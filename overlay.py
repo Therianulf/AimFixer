@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from enum import Enum, auto
-
 import objc
 from AppKit import (
     NSApplication,
@@ -34,6 +32,7 @@ from config import (
     OVERLAY_WARNING_FLASH_S,
     OVERLAY_WIDTH,
 )
+from models import OverlayState
 
 # Window level above screensavers / status bars (level 25)
 NSStatusWindowLevel = 25
@@ -53,24 +52,25 @@ _INSTRUCTIONS_TEXT = (
     "\u2022 Only fire when you're on target\n"
     "\u2022 Pick targets at varying distances\n"
     "\n"
-    "\u2022 F7: Change game"
+    "\u2022 F7: Game  \u2022 F8: Quit  \u2022 F9: Settings"
+)
+
+_DONE_TEXT = (
+    "Session complete!\n\n"
+    "\u2022 F5: New session\n"
+    "\u2022 F8: Quit and show charts\n"
+    "\u2022 F9: Change settings"
 )
 
 _DARK_BG = (0.08, 0.08, 0.08)
 _RED_BG = (0.6, 0.05, 0.05)
 
 
-class OverlayState(Enum):
-    WAITING = auto()
-    RECORDING = auto()
-    ANALYZING = auto()
-    HIDDEN = auto()
-
-
 _STATE_TEXT = {
     OverlayState.WAITING: "Press F5 to start recording",
     OverlayState.RECORDING: "\U0001F534 Recording\u2026  Press F6 to stop",
     OverlayState.ANALYZING: "Recording stopped. Analyzing\u2026",
+    OverlayState.DONE: "\u2705 Done!  Press F5 for new session",
 }
 
 _DEFAULT_WAITING_FMT = "{game}  |  Press F5 to start"
@@ -170,6 +170,7 @@ class OverlayController(NSObject):
 
         self._pending_state = OverlayState.HIDDEN
         self._warning_timer = None
+        self._pending_warning = None
         self._green = green
         self._current_game_display = "Apex Legends"
         return self
@@ -210,9 +211,13 @@ class OverlayController(NSObject):
             self._window.orderOut_(None)
             return
 
-        if state == OverlayState.WAITING:
+        if state in (OverlayState.WAITING, OverlayState.DONE):
             self._resize_window(OVERLAY_HEIGHT_WAITING)
             self._instructions.setHidden_(False)
+            if state == OverlayState.DONE:
+                self._instructions.setStringValue_(_DONE_TEXT)
+            else:
+                self._instructions.setStringValue_(_INSTRUCTIONS_TEXT)
         else:
             self._resize_window(OVERLAY_HEIGHT_COMPACT)
             self._instructions.setHidden_(True)
@@ -241,6 +246,23 @@ class OverlayController(NSObject):
         """Called on main thread to update game name in status text."""
         text = _DEFAULT_WAITING_FMT.format(game=self._current_game_display)
         self._status.setStringValue_(text)
+
+    @objc.python_method
+    def set_settings(self, dpi: int, h_sens: float, v_sens: float):
+        """Thread-safe: update the settings display in the title."""
+        if v_sens != h_sens:
+            self._settings_str = f"{dpi} DPI / H:{h_sens} V:{v_sens}"
+        else:
+            self._settings_str = f"{dpi} DPI / {h_sens} sens"
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "applySettings", None, False
+        )
+
+    def applySettings(self):
+        """Called on main thread to update settings in title."""
+        settings = getattr(self, '_settings_str', '')
+        if settings:
+            self._title.setStringValue_(f"\U0001F3AF AimFixer  \u2022  {settings}")
 
     @objc.python_method
     def flash_warning(self, message: str):
@@ -316,3 +338,4 @@ class OverlayController(NSObject):
             fn = self._scheduled_fn
             self._scheduled_fn = None
             fn()
+

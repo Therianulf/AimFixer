@@ -4,8 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from statistics import median
 
+import sys
 import matplotlib
-matplotlib.use("macosx")
+if sys.platform == "darwin":
+    matplotlib.use("macosx")
 import matplotlib.pyplot as plt
 
 from config import (
@@ -13,7 +15,7 @@ from config import (
     MIN_ANALYZED_CLICKS_FOR_HISTORY, MIN_SESSION_DURATION_FOR_HISTORY,
     GAME_DISPLAY_NAMES, format_sens,
 )
-from analyzer import _confidence_weight, _snap_dpi
+from analyzer import confidence_weight, snap_dpi
 from history import load_all_sessions
 
 
@@ -157,7 +159,7 @@ def _compute_aggregate_recommendation(
     total_clicks = stats.total_analyzed_clicks
 
     raw_reduction = min(
-        overshoot * CORRECTION_FACTOR * _confidence_weight(total_clicks),
+        overshoot * CORRECTION_FACTOR * confidence_weight(total_clicks),
         MAX_REDUCTION_PCT,
     )
 
@@ -173,7 +175,7 @@ def _compute_aggregate_recommendation(
             "reduction_pct": raw_reduction,
             "new_sens": new_sens,
             "new_v_sens": new_v_sens,
-            "new_dpi": _snap_dpi(dpi * (1 - raw_reduction / 100.0)),
+            "new_dpi": snap_dpi(dpi * (1 - raw_reduction / 100.0)),
             "note": "Both overshoot and rowing detected across sessions.",
         }
     elif has_overshoot:
@@ -184,7 +186,7 @@ def _compute_aggregate_recommendation(
             "reduction_pct": raw_reduction,
             "new_sens": new_sens,
             "new_v_sens": new_v_sens,
-            "new_dpi": _snap_dpi(dpi * (1 - raw_reduction / 100.0)),
+            "new_dpi": snap_dpi(dpi * (1 - raw_reduction / 100.0)),
             "note": "",
         }
     elif rowing_significant:

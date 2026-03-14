@@ -3,7 +3,8 @@
     "allow": [
       "Bash(source:*)",
       "Bash(/Users/blarson/Github/AimFixer/.venv/bin/python3:*)",
-      "Bash(.venv/bin/python:*)"
+      "Bash(.venv/bin/python:*)",
+      "Bash(ls:*)"
     ]
   }
 }
